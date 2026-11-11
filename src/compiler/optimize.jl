@@ -164,6 +164,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
                     add!(fpm, AllocOptPass())
                     add!(fpm, RestoreAllocaType())
                     add!(fpm, SROAPass())
+                    add!(fpm, SimplifyCFGPass())
                     add!(fpm, GVNPass())
 
                     # This InstCombine needs to be after GVN
@@ -335,6 +336,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # over the structure of an aggregate)
         add!(fpm, SROAPass())
         add!(fpm, InstSimplifyPass())
+        add!(fpm, SimplifyCFGPass())
 
         add!(fpm, GVNPass())
         add!(fpm, MemCpyOptPass())

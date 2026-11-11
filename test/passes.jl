@@ -1172,3 +1172,155 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "SimplifyCFG before GVN with !invariant.group (#2508)" begin
+    # After LoopFullUnrollPass + SROAPass + InstSimplifyPass in addOptimizationPasses!,
+    # folded constant branches can leave >100 blocks separating a dominating load
+    # (`%v0`) from downstream `!invariant.group` loads (`%ig1`, `%ig2`) whose bypass
+    # edges (`after0`, `after1`) just became dead. Without `SimplifyCFGPass()` before
+    # `GVNPass()`, `GVN` forwards `%v0` across `DefaultBlockScanLimit` via
+    # `getInvariantGroupPointerDependency` and then erases `%v0` on a subsequent
+    # iteration, leaving a dangling `<badref>` operand in `%shl`.
+    @test @filecheck begin
+        @check_label "@test_2508("
+        @check_not "%ig1 ="
+        @check_not "<badref>"
+        @check "%shl = shl i64 "
+        @check_next "ret i64 %shl"
+        LLVM.Context() do ctx
+            ir = """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare i1 @cond(i64) #0
+            declare void @side(i64) #0
+
+            define fastcc i64 @test_2508(i64 addrspace(11)* %p, i64 addrspace(11)* %q, i64 addrspace(13)* noalias %out) {
+            top:
+              %arr = alloca [2 x i64], align 8
+              %p0 = getelementptr inbounds [2 x i64], [2 x i64]* %arr, i64 0, i64 0
+              %p1 = getelementptr inbounds [2 x i64], [2 x i64]* %arr, i64 0, i64 1
+              store i64 1, i64* %p0, align 8
+              store i64 1, i64* %p1, align 8
+              %v0 = load i64, i64 addrspace(11)* %p, align 8
+              %q0 = load i64, i64 addrspace(11)* %q, align 8
+              call void @side(i64 %q0)
+              br label %init_loop
+
+            init_loop:
+              %ii = phi i64 [ 0, %top ], [ %ii.next, %init_loop ]
+              %is_last = icmp eq i64 %ii, 1
+              %idx = select i1 %is_last, i64 0, i64 1
+              %gep = getelementptr inbounds [2 x i64], [2 x i64]* %arr, i64 0, i64 %idx
+              store i64 0, i64* %gep, align 8
+              %ii.next = add nuw nsw i64 %ii, 1
+              %init_done = icmp eq i64 %ii.next, 2
+              br i1 %init_done, label %use_bb, label %init_loop, !llvm.loop !2
+
+            use_bb:
+              %z_idx = load i64, i64* %p0, align 8
+              %q_gep = getelementptr inbounds i64, i64 addrspace(11)* %q, i64 %z_idx
+              %q1 = load i64, i64 addrspace(11)* %q_gep, align 8
+              %diff = sub i64 %q0, %q1
+              %d1 = mul i64 %v0, %diff
+              %d2 = and i64 %v0, %diff
+              %dead = or i64 %d1, %d2
+              store i64 %dead, i64 addrspace(13)* %out, align 8
+              %f = icmp ne i64 %z_idx, 0
+              br label %loop0
+
+            loop0:
+              %iv0 = phi i64 [ 0, %use_bb ], [ %iv0.next, %latch0 ]
+              %c0 = call i1 @cond(i64 %iv0)
+              br i1 %c0, label %side0, label %latch0
+
+            side0:
+              call void @side(i64 %iv0)
+              br label %latch0
+
+            latch0:
+              %iv0.next = add nuw nsw i64 %iv0, 1
+              %done0 = icmp eq i64 %iv0.next, 60
+              br i1 %done0, label %after0, label %loop0, !llvm.loop !3
+
+            after0:
+              br i1 %f, label %loop1_ph, label %ig1_bb
+
+            ig1_bb:
+              %ig1 = load i64, i64 addrspace(11)* %p, align 8, !invariant.group !0
+              %ig1_dead = mul i64 %ig1, %diff
+              store i64 %ig1_dead, i64 addrspace(13)* %out, align 8
+              br label %loop1_ph
+
+            loop1_ph:
+              br label %loop1
+
+            loop1:
+              %iv1 = phi i64 [ 0, %loop1_ph ], [ %iv1.next, %latch1 ]
+              %c1 = call i1 @cond(i64 %iv1)
+              br i1 %c1, label %side1, label %latch1
+
+            side1:
+              call void @side(i64 %iv1)
+              br label %latch1
+
+            latch1:
+              %iv1.next = add nuw nsw i64 %iv1, 1
+              %done1 = icmp eq i64 %iv1.next, 60
+              br i1 %done1, label %after1, label %loop1, !llvm.loop !4
+
+            after1:
+              br i1 %f, label %ig2_bb, label %m2
+
+            m2:
+              call void @side(i64 0)
+              br label %ig2_bb
+
+            ig2_bb:
+              %ig2 = load i64, i64 addrspace(11)* %p, align 8, !invariant.group !1
+              %shl = shl i64 %ig2, 1
+              ret i64 %shl
+            }
+
+            attributes #0 = { inaccessiblememonly nounwind }
+
+            !0 = distinct !{}
+            !1 = distinct !{}
+            !2 = distinct !{!2, !5}
+            !3 = distinct !{!3, !5}
+            !4 = distinct !{!4, !5}
+            !5 = !{!"llvm.loop.unroll.full"}
+            """
+
+            tm = Enzyme.Compiler.JIT.get_tm()
+            mod = parse(LLVM.Module, ir)
+            LLVM.@dispose pb = LLVM.NewPMPassBuilder(; verify_each = true) begin
+                Enzyme.Compiler.registerEnzymeAndPassPipeline!(pb)
+                LLVM.register!(pb, Enzyme.Compiler.ReinsertGCMarkerPass())
+                LLVM.register!(pb, Enzyme.Compiler.SafeAtomicToRegularStorePass())
+                LLVM.register!(pb, Enzyme.Compiler.RestoreAllocaType())
+                LLVM.register!(pb, Enzyme.Compiler.RemoveAlwaysInlineRootsPass())
+                LLVM.add!(pb, LLVM.NewPMAAManager()) do aam
+                    LLVM.add!(aam, LLVM.ScopedNoAliasAA())
+                    LLVM.add!(aam, LLVM.TypeBasedAA())
+                    LLVM.add!(aam, LLVM.BasicAA())
+                end
+                LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+                    Enzyme.Compiler.addOptimizationPasses!(mpm)
+                end
+                LLVM.run!(pb, mod, tm)
+            end
+            LLVM.verify(mod)
+
+            mod2 = parse(LLVM.Module, ir)
+            Enzyme.Compiler.optimize!(mod2, tm, nothing)
+            LLVM.verify(mod2)
+
+            mod3 = parse(LLVM.Module, ir)
+            Enzyme.Compiler.post_optimize!(mod3, tm, false; callconv = false)
+            LLVM.verify(mod3)
+            string(mod3)
+        end
+    end
+end
