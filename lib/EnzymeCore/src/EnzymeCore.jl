@@ -20,6 +20,10 @@ To implement your own congruency check for a custom type, define a method for `c
     return typeof(x) == typeof(y)
 end
 
+@inline function congruent(x::T, y::T) where {T <: AbstractArray}
+    return size(x) == size(y)
+end
+
 @inline function congruent(x::T, y::T) where {T <: SubArray}
     return x.indices == y.indices && x.offset1 == y.offset1 && x.stride1 == y.stride1
 end
