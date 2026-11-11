@@ -1172,3 +1172,146 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+function call_llvmbc_3269(::Val{fn}, x::Vector{Float64}) where {fn}
+    out = [0.0]
+    ccall(fn, Cvoid, (Ptr{Float64}, Ptr{Float64}), x, out)
+    return out[1]
+end
+
+@testset "Embedded bitcode custom derivative registration (#3269)" begin
+    LLVM.Context() do ctx
+        dst = parse(
+            LLVM.Module, """
+            declare void @my_ext(double*, double*)
+
+            define void @caller(double* %x, double* %out) {
+              call void @my_ext(double* %x, double* %out)
+              ret void
+            }
+            """
+        )
+        inmod = parse(
+            LLVM.Module, """
+            declare void @my_ext(double*, double*)
+
+            define void @kernel_ext(double* %x, double* %out) {
+              call void @my_ext(double* %x, double* %out)
+              ret void
+            }
+
+            define i8* @aug_my_ext(double* %x, double* %dx, double* %out, double* %dout) {
+              ret i8* null
+            }
+
+            define void @grad_my_ext(double* %x, double* %dx, double* %out, double* %dout, i8* %tape) {
+              ret void
+            }
+
+            @__enzyme_register_gradient_my_ext = global [3 x i8*] [
+              i8* bitcast (void (double*, double*)* @my_ext to i8*),
+              i8* bitcast (i8* (double*, double*, double*, double*)* @aug_my_ext to i8*),
+              i8* bitcast (void (double*, double*, double*, double*, i8*)* @grad_my_ext to i8*)
+            ]
+
+            @llvm.compiler.used = appending global [1 x i8*] [
+              i8* bitcast ([3 x i8*]* @__enzyme_register_gradient_my_ext to i8*)
+            ], section "llvm.metadata"
+            """
+        )
+        # Mirror `try_import_llvmbc`: `llvm.*` globals must retain AppendingLinkage.
+        for g in globals(inmod)
+            if !startswith(LLVM.name(g), "llvm.")
+                linkage!(g, LLVM.API.LLVMExternalLinkage)
+            end
+        end
+        @test linkage(globals(inmod)["llvm.compiler.used"]) == LLVM.API.LLVMAppendingLinkage
+        LLVM.link!(dst, inmod)
+        @test LLVM.verify(dst) === nothing
+
+        LLVM.@dispose pb = LLVM.NewPMPassBuilder() begin
+            Enzyme.Compiler.registerEnzymeAndPassPipeline!(pb)
+            LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+                LLVM.add!(mpm, Enzyme.Compiler.PreserveNVVMPass())
+            end
+            LLVM.run!(pb, dst)
+        end
+        @test haskey(metadata(functions(dst)["my_ext"]), "enzyme_gradient")
+    end
+
+    cc = something(Sys.which("cc"), Sys.which("gcc"), Sys.which("clang-18"), Sys.which("clang"), Some(nothing))
+    if Sys.islinux() && cc !== nothing
+        mktempdir() do dir
+            bc_path = joinpath(dir, "kernel_3269.bc")
+            LLVM.Context() do ctx
+                bc_mod = parse(
+                    LLVM.Module, """
+                    declare void @my_square_ext_3269(double*, double*)
+
+                    define void @kernel_3269(double* %x, double* %out) {
+                      call void @my_square_ext_3269(double* %x, double* %out)
+                      ret void
+                    }
+
+                    define i8* @aug_my_square_3269(double* %x, double* %dx, double* %out, double* %dout) {
+                      call void @my_square_ext_3269(double* %x, double* %out)
+                      ret i8* null
+                    }
+
+                    define void @grad_my_square_3269(double* %x, double* %dx, double* %out, double* %dout, i8* %tape) {
+                      %vx = load double, double* %x, align 8
+                      %vdout = load double, double* %dout, align 8
+                      store double 0.0, double* %dout, align 8
+                      %scale = fmul double 100.0, %vx
+                      %grad = fmul double %scale, %vdout
+                      %vdx = load double, double* %dx, align 8
+                      %ndx = fadd double %vdx, %grad
+                      store double %ndx, double* %dx, align 8
+                      ret void
+                    }
+
+                    @__enzyme_register_gradient_my_square_ext_3269 = global [3 x i8*] [
+                      i8* bitcast (void (double*, double*)* @my_square_ext_3269 to i8*),
+                      i8* bitcast (i8* (double*, double*, double*, double*)* @aug_my_square_3269 to i8*),
+                      i8* bitcast (void (double*, double*, double*, double*, i8*)* @grad_my_square_3269 to i8*)
+                    ]
+
+                    @llvm.compiler.used = appending global [1 x i8*] [
+                      i8* bitcast ([3 x i8*]* @__enzyme_register_gradient_my_square_ext_3269 to i8*)
+                    ], section "llvm.metadata"
+                    """
+                )
+                write(bc_path, bc_mod)
+            end
+
+            impl_c = joinpath(dir, "my_square_impl.c")
+            write(impl_c, "void my_square_ext_3269(double *x, double *out) { *out = (*x) * (*x); }\n")
+
+            kern_c = joinpath(dir, "kernel_3269.c")
+            write(
+                kern_c, """
+                extern void my_square_ext_3269(double *x, double *out);
+                void kernel_3269(double *x, double *out) { my_square_ext_3269(x, out); }
+                __asm__(
+                    ".pushsection .llvmbc,\\\"\\\",@progbits\\n"
+                    ".incbin \\"$(escape_string(bc_path))\\"\\n"
+                    ".popsection\\n"
+                );
+                """
+            )
+            lib_so = joinpath(dir, "libmy_square_3269.so")
+            kern_so = joinpath(dir, "libkernel_3269.so")
+            arch_flags = Sys.WORD_SIZE == 32 ? ["-m32"] : String[]
+            if success(`$cc $arch_flags -O2 -shared -fPIC -o $lib_so $impl_c`) &&
+                    success(`$cc $arch_flags -O2 -shared -fPIC -o $kern_so $kern_c`)
+                Libdl.dlopen(lib_so, Libdl.RTLD_GLOBAL)
+                hk = Libdl.dlopen(kern_so)
+                fn_ptr = Libdl.dlsym(hk, :kernel_3269)
+                x = [2.0]
+                dx = [0.0]
+                autodiff(Reverse, call_llvmbc_3269, Active, Const(Val(fn_ptr)), Duplicated(x, dx))
+                @test dx == [200.0]
+            end
+        end
+    end
+end
