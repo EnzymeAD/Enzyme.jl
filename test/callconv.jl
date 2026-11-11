@@ -523,3 +523,73 @@ d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0
     @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
     @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end
+
+@noinline function myop_2305!(C, b)
+    C .+= b
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+        cfg,
+        ::Const{typeof(myop_2305!)},
+        ::Type{Const{Nothing}},
+        C::Annotation,
+        b::Annotation,
+    )
+    myop_2305!(C.val, b.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.forward(
+        cfg,
+        ::Const{typeof(myop_2305!)},
+        ::Type{Const{Nothing}},
+        C::Annotation,
+        b::Annotation,
+    )
+    if !(C isa Const) && !(b isa Const)
+        C.dval .+= b.dval
+    end
+    if EnzymeRules.needs_primal(cfg) || !(C isa DuplicatedNoNeed)
+        myop_2305!(C.val, b.val)
+    end
+    return nothing
+end
+
+function EnzymeRules.reverse(
+        cfg,
+        ::Const{typeof(myop_2305!)},
+        ::Type{Const{Nothing}},
+        tape,
+        C::Annotation,
+        b::Annotation,
+    )
+    db1 = similar(b.dval)
+    db1 .= b.dval
+    b.dval .+= db1
+    fill!(C.dval, 0.0)
+    return (nothing, nothing)
+end
+
+function loss_2305(θ)
+    C = zeros(2)
+    b = view(θ, 1:2)
+    myop_2305!(C, b)
+    return sum(abs2, C)
+end
+
+function grad_2305!(θ, dθ)
+    autodiff(Reverse, loss_2305, Active, Duplicated(θ, dθ))
+    return nothing
+end
+
+@testset "Forward-over-Reverse returnRoots parmremove reconciliation (#2305)" begin
+    θ = [1.0, 2.0, 3.0]
+    dθ = [1.0, 0.0, 0.0]
+    bθ = [3.0, 5.0, 7.0]
+    dbθ = [1.0, 2.0, 3.0]
+
+    autodiff(Forward, grad_2305!, Duplicated(θ, dθ), Duplicated(bθ, dbθ))
+    @test bθ ≈ [6.0, 10.0, 7.0]
+    @test dbθ ≈ [2.0, 4.0, 3.0]
+end
