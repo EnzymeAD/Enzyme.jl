@@ -849,4 +849,164 @@ end
     end
 end
 
+struct DiffCache4005
+    du::Vector{Float64}
+end
+get_tmp_4005(dc::DiffCache4005, x::Float64) = dc.du
+
+function EnzymeRules.forward(
+        config::RevOrFwd,
+        ::Const{typeof(get_tmp_4005)},
+        ::Type{<:Annotation},
+        dc::Duplicated{DiffCache4005},
+        x::Annotation{Float64},
+    ) where {RevOrFwd <: EnzymeRules.FwdConfigWidth{1}}
+    primal = get_tmp_4005(dc.val, x.val)
+    shadow = dc.dval.du
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(primal, shadow)
+    elseif EnzymeRules.needs_shadow(config)
+        return shadow
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+
+function augmented_primal(
+        config::RevConfigWidth{1},
+        ::Const{typeof(get_tmp_4005)},
+        ::Type{<:Annotation},
+        dc::Duplicated{DiffCache4005},
+        x::Annotation{Float64},
+    )
+    primal = EnzymeRules.needs_primal(config) ? get_tmp_4005(dc.val, x.val) : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? dc.dval.du : nothing
+    return AugmentedReturn(primal, shadow, nothing)
+end
+
+function reverse(
+        config::RevConfigWidth{1},
+        ::Const{typeof(get_tmp_4005)},
+        ::Type{<:Annotation},
+        tape,
+        dc::Duplicated{DiffCache4005},
+        x::Annotation{Float64},
+    )
+    return (nothing, x isa Active ? 0.0 : nothing)
+end
+
+function loss_dc_4005(x, dc)
+    b = get_tmp_4005(dc, x)
+    b[1] = x^3
+    return b[1]
+end
+
+dloss_dc_4005_fwd(x, dc) = only(Enzyme.autodiff(Forward, loss_dc_4005, Duplicated(x, 1.0), dc))
+function dloss_dc_4005_rev(x, dc, ddc)
+    fill!(ddc.du, 0.0)
+    return Enzyme.autodiff(Reverse, loss_dc_4005, Active, Active(x), Duplicated(dc, ddc))[1][1]
+end
+
+@noinline f_frule_only_4005(a::Float64, b::Float64) = a
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(f_frule_only_4005)},
+        ::Type{<:Annotation},
+        a::Annotation{Float64},
+        b::Annotation{Float64},
+    )
+    primal = f_frule_only_4005(a.val, b.val)
+    da = a isa Const ? 0.0 : a.dval
+    db = b isa Const ? 0.0 : b.dval
+    dval = da + 5.0 * db
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(primal, dval)
+    elseif EnzymeRules.needs_shadow(config)
+        return dval
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+loss_frule_only_4005(x, y) = x * f_frule_only_4005(2.0, y)
+dloss_frule_only_4005(x, y) = Enzyme.autodiff(Reverse, loss_frule_only_4005, Active, Active(x), Const(y))[1][1]
+
+@noinline f_rrule_only_4005(a::Float64, b::Float64) = a
+function augmented_primal(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(f_rrule_only_4005)},
+        ::Type{<:Annotation},
+        a::Annotation{Float64},
+        b::Annotation{Float64},
+    )
+    primal = EnzymeRules.needs_primal(config) ? f_rrule_only_4005(a.val, b.val) : nothing
+    return AugmentedReturn(primal, nothing, nothing)
+end
+function reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(f_rrule_only_4005)},
+        dret::Active{Float64},
+        tape,
+        a::Annotation{Float64},
+        b::Annotation{Float64},
+    )
+    return (a isa Active ? dret.val : nothing, b isa Active ? 7.0 * dret.val : nothing)
+end
+loss_rrule_only_4005(x, y) = x * f_rrule_only_4005(2.0, y)
+dloss_rrule_only_4005(x, y) = only(Enzyme.autodiff(Forward, loss_rrule_only_4005, Duplicated(x, 1.0), Const(y)))
+
+@testset "Nested Fwd/Rev through custom rules with unused primal args (#4005)" begin
+    x0 = 2.0
+    c1 = DiffCache4005(zeros(1))
+    dc1 = DiffCache4005(zeros(1))
+    @test dloss_dc_4005_fwd(x0, Duplicated(c1, dc1)) ≈ 12.0
+
+    res_ff = Enzyme.autodiff(
+        Forward,
+        Const((x, c, dc) -> dloss_dc_4005_fwd(x, Duplicated(c, dc))),
+        Duplicated(x0, 1.0),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+    )
+    @test res_ff[1] ≈ 12.0
+
+    res_rf = Enzyme.autodiff(
+        Reverse,
+        Const((x, c, dc) -> dloss_dc_4005_fwd(x, Duplicated(c, dc))),
+        Active,
+        Active(x0),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+    )
+    @test res_rf[1][1] ≈ 12.0
+
+    res_fr = Enzyme.autodiff(
+        Forward,
+        Const(dloss_dc_4005_rev),
+        Duplicated(x0, 1.0),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+    )
+    @test res_fr[1] ≈ 12.0
+
+    res_rr = Enzyme.autodiff(
+        Reverse,
+        Const(dloss_dc_4005_rev),
+        Active,
+        Active(x0),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+        Duplicated(DiffCache4005(zeros(1)), DiffCache4005(zeros(1))),
+    )
+    @test res_rr[1][1] ≈ 12.0
+
+    @test dloss_frule_only_4005(3.0, 4.0) ≈ 2.0
+    @test Enzyme.autodiff(Forward, Const(dloss_frule_only_4005), Const(3.0), Duplicated(4.0, 1.0)) == (5.0,)
+
+    @test dloss_rrule_only_4005(3.0, 4.0) ≈ 2.0
+    @test Enzyme.autodiff(Reverse, Const(dloss_rrule_only_4005), Active, Const(3.0), Active(4.0))[1] == (nothing, 7.0)
+end
+
 end # ReverseRules
