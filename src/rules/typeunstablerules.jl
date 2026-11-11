@@ -1852,47 +1852,94 @@ end
     common_jl_getfield_rev(1, B, orig, gutils, tape)
 end
 
+function _setfield_normal_as_shadow!(B, gutils, orig, width)
+    normal = new_from_original(gutils, orig)
+    if width == 1
+        return normal
+    else
+        sel = select!(B, LLVM.ConstantInt(LLVM.Int1Type(), 1), normal, normal)
+        API.moveBefore(normal, sel, B)
+        res = UndefValue(
+            LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+        )
+        for idx in 1:width
+            res = insert_value!(B, res, sel, idx - 1)
+        end
+        return res
+    end
+end
+
+function rt_jl_setfield_fwd(dptr, idx, ::Val{isconst}, val, dval) where {isconst}
+    if dptr === nothing
+        return nothing
+    end
+    RT = Core.Typeof(val)
+    state = active_reg_nothrow(RT)
+    if isconst || (dval === nothing && val !== nothing)
+        if state == ActiveState
+            setfield!(dptr, idx, make_zero(val))
+        elseif state == MixedState
+            throw(
+                AssertionError(
+                    "$RT has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information",
+                ),
+            )
+        else
+            setfield!(dptr, idx, val)
+        end
+    else
+        setfield!(dptr, idx, dval)
+    end
+    return nothing
+end
+
 function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = @view operands(orig)[offset:end]
     width = get_width(gutils)
 
-    if !is_constant_value(gutils, origops[4])
-        shadowout = invert_pointer(gutils, origops[4], B)
+    if !is_constant_value(gutils, origops[2])
+        shadowstruct = invert_pointer(gutils, origops[2], B)
+        primstruct =
+            get_runtime_activity(gutils) ? new_from_original(gutils, origops[2]) : nothing
+        primval = new_from_original(gutils, origops[4])
+        null_jl = unsafe_to_llvm(B, nothing)
 
-        shadowin = if !is_constant_value(gutils, origops[2])
-            invert_pointer(gutils, origops[2], B)
+        shadowval = if !is_constant_value(gutils, origops[4])
+            invert_pointer(gutils, origops[4], B)
         else
-            new_from_original(gutils, origops[2])
+            nothing
         end
 
-        args = LLVM.Value[
-            new_from_original(gutils, origops[1]),
-            shadowin,
-            new_from_original(gutils, origops[3]),
-            shadowout,
-        ]
-        valTys = API.CValueType[
-            API.VT_Primal,
-            API.VT_Shadow,
-            API.VT_Primal,
-            API.VT_Shadow,
-        ]
-        if offset != 1
-            pushfirst!(args, first(operands(orig)))
-            pushfirst!(valTys, API.VT_Primal)
+        for idx in 1:width
+            dstruct_i =
+                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1)
+            if get_runtime_activity(gutils)
+                dstruct_i = select!(
+                    B,
+                    icmp!(B, LLVM.API.LLVMIntEQ, dstruct_i, primstruct),
+                    null_jl,
+                    dstruct_i,
+                )
+            end
+            dval_i = if is_constant_value(gutils, origops[4])
+                null_jl
+            else
+                sv_i = (width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)
+                get_runtime_activity(gutils) ?
+                    select!(B, icmp!(B, LLVM.API.LLVMIntEQ, sv_i, primval), null_jl, sv_i) :
+                    sv_i
+            end
+            vals = LLVM.Value[
+                unsafe_to_llvm(B, rt_jl_setfield_fwd),
+                dstruct_i,
+                new_from_original(gutils, origops[3]),
+                unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
+                primval,
+                dval_i,
+            ]
+            cal = emit_apply_generic!(B, vals)
+            debug_from_orig!(gutils, cal, orig)
         end
-
-        batch_call_same_with_inverted_arg_if_active!(
-            B,
-            gutils,
-            orig,
-            args,
-            valTys,
-            false,
-            "setfield";
-            cmpidx = 4 + (offset - 1),
-            need_result = false
-        ) #=lookup=#
     end
 
     if shadowR != C_NULL && !is_constant_value(gutils, orig)
@@ -1921,19 +1968,7 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                 invert_pointer(gutils, origops[4], B)
             end
         else
-            normal = new_from_original(gutils, orig)
-            if width == 1
-                normal
-            else
-                res = UndefValue(
-                    LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
-                )
-                position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
-                for idx in 1:width
-                    res = insert_value!(B, res, normal, idx - 1)
-                end
-                res
-            end
+            _setfield_normal_as_shadow!(B, gutils, orig, width)
         end
         unsafe_store!(shadowR, shadowres.ref)
     end
@@ -1942,6 +1977,9 @@ end
 
 
 function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
+    if dptr === nothing
+        return nothing
+    end
     RT = Core.Typeof(val)
 
     state = active_reg_nothrow(RT)
@@ -1960,15 +1998,22 @@ function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,is
             AssertionError("$RT has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information"),
         )
     else
-        setfield!(dptr, idx, isconst ? val : dval)
+        setfield!(
+            dptr,
+            idx,
+            (isconst || (dval === nothing && val !== nothing)) ? val : dval,
+        )
     end
 end
 
 function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
+    if dptr === nothing
+        return nothing
+    end
     RT = Core.Typeof(val)
     state = active_reg_nothrow(RT)
     if state == ActiveState
-        if !isconst
+        if !isconst && dval isa Base.RefValue
             dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
         end
         # The store overwrote the field, so no adjoint flows past it to an
@@ -1983,6 +2028,10 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
 
     if !is_constant_value(gutils, origops[2])
         shadowstruct = invert_pointer(gutils, origops[2], B)
+        primstruct =
+            get_runtime_activity(gutils) ? new_from_original(gutils, origops[2]) : nothing
+        primval = new_from_original(gutils, origops[4])
+        null_jl = unsafe_to_llvm(B, nothing)
 
         shadowval = if !is_constant_value(gutils, origops[4])
             invert_pointer(gutils, origops[4], B)
@@ -1993,16 +2042,32 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
         for idx = 1:width
+            dstruct_i =
+                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1)
+            if get_runtime_activity(gutils)
+                dstruct_i = select!(
+                    B,
+                    icmp!(B, LLVM.API.LLVMIntEQ, dstruct_i, primstruct),
+                    null_jl,
+                    dstruct_i,
+                )
+            end
+            dval_i = if is_constant_value(gutils, origops[4])
+                null_jl
+            else
+                sv_i = (width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)
+                get_runtime_activity(gutils) ?
+                    select!(B, icmp!(B, LLVM.API.LLVMIntEQ, sv_i, primval), null_jl, sv_i) :
+                    sv_i
+            end
             vals = LLVM.Value[
-                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
+                dstruct_i,
                 new_from_original(gutils, origops[3]),
                 unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
-                new_from_original(gutils, origops[4]),
-                is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
-                ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
+                primval,
+                dval_i,
             ]
 
-            # TODO handle runtime activity
             pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_aug))
 
             cal = emit_apply_generic!(B, vals)
@@ -2015,19 +2080,7 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
         shadowres = if !is_constant_value(gutils, origops[4])
             invert_pointer(gutils, origops[4], B)
         else
-            normal = new_from_original(gutils, orig)
-            if width == 1
-                normal
-            else
-                res = UndefValue(
-                    LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
-                )
-                position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
-                for idx in 1:width
-                    res = insert_value!(B, res, normal, idx - 1)
-                end
-                res
-            end
+            _setfield_normal_as_shadow!(B, gutils, orig, width)
         end
         unsafe_store!(shadowR, shadowres.ref)
     end
@@ -2044,6 +2097,10 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
         # extractvalue emitted into the reverse builder has no primal
         # counterpart, and lookup_value only accepts values of the primal.
         shadowstruct = lookup_value(gutils, invert_pointer(gutils, origops[2], B), B)
+        primstruct =
+            get_runtime_activity(gutils) ?
+            lookup_value(gutils, new_from_original(gutils, origops[2]), B) : nothing
+        null_jl = unsafe_to_llvm(B, nothing)
 
         shadowval = if !is_constant_value(gutils, origops[4])
             lookup_value(gutils, invert_pointer(gutils, origops[4], B), B)
@@ -2056,15 +2113,31 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
 
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-        # TODO handle runtime activity
         for idx = 1:width
+            dstruct_i =
+                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1)
+            if get_runtime_activity(gutils)
+                dstruct_i = select!(
+                    B,
+                    icmp!(B, LLVM.API.LLVMIntEQ, dstruct_i, primstruct),
+                    null_jl,
+                    dstruct_i,
+                )
+            end
+            dval_i = if is_constant_value(gutils, origops[4])
+                null_jl
+            else
+                sv_i = (width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)
+                get_runtime_activity(gutils) ?
+                    select!(B, icmp!(B, LLVM.API.LLVMIntEQ, sv_i, primalval), null_jl, sv_i) :
+                    sv_i
+            end
             vals = LLVM.Value[
-                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
+                dstruct_i,
                 symval,
                 unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
                 primalval,
-                is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
-                ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
+                dval_i,
             ]
 
             pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_rev))
