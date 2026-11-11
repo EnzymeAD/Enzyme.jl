@@ -36,6 +36,14 @@ EnzymeRules.@easy_rule(
     (@Constant, Ω - (SpecialFunctions.besselkx(nu - 1, x) + SpecialFunctions.besselkx(nu + 1, x)) / 2),
 )
 
+# Unscaled besselk (x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/3585)
+# dK/dx = -(besselk(nu - 1, x) + besselk(nu + 1, x)) / 2, DLMF 10.29.2.
+# nu is @Constant as above: dK/dnu has no closed form, so its partial comes back zero.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besselk(nu::Real, x::Real),
+    (@Constant, -(SpecialFunctions.besselk(nu - 1, x) + SpecialFunctions.besselk(nu + 1, x)) / 2),
+)
+
 # x/ref: https://github.com/JuliaMath/SpecialFunctions.jl/pull/506
 ## Incomplete beta derivatives via Boik & Robinson-Cox
 #
