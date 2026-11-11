@@ -540,3 +540,38 @@ end
 @testset "Invoke within apply iterate" begin
     autodiff(set_runtime_activity(Reverse), invokeiter, Active, Active(1.0), Const(34))
 end
+
+struct CST3104
+    a::Float64
+    b::Float64
+end
+@inline _apply_3104(t::CST3104, x::Float64) = (t.a * x + t.b, log(abs(t.a)))
+
+_fold_3104(::Tuple{}, ::AbstractVector, i) = ((), 0.0)
+function _fold_3104(ts::Tuple, x::AbstractVector, i)
+    y1, lj1 = _apply_3104(first(ts), x[i])
+    rest_y, rest_lj = _fold_3104(Base.tail(ts), x, i + 1)
+    return ((y1, rest_y...), lj1 + rest_lj)
+end
+
+function f_fold_3104(ts, x)
+    ys, lj = _fold_3104(ts, x, 1)
+    return sum(ys) + lj
+end
+
+@testset "Recursive Base.tail tuple fold beyond 32 elements (#3104)" begin
+    for N in (32, 33, 34)
+        ts = ntuple(_ -> CST3104(2.0, 0.5), N)
+        x = collect(1.0:N)
+        dx = zeros(N)
+        dx[1] = 1.0
+        fwd = autodiff(WithPrimal(Forward), f_fold_3104, Duplicated, Const(ts), Duplicated(x, dx))
+        @test fwd[1] ≈ 2.0
+        @test fwd[2] ≈ sum(2.0 .* x .+ 0.5) + N * log(2.0)
+
+        fill!(dx, 0.0)
+        rev = autodiff(ReverseWithPrimal, f_fold_3104, Active, Const(ts), Duplicated(x, dx))
+        @test rev[2] ≈ sum(2.0 .* x .+ 0.5) + N * log(2.0)
+        @test all(dx .≈ 2.0)
+    end
+end
