@@ -1172,3 +1172,61 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "Constant-memory alias claims are dropped from functions to be inlined" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            define double @rule(double addrspace(11)* %n) alwaysinline {
+            top:
+              %c = load double, double addrspace(11)* %n, align 8, !tbaa !6, !alias.scope !8, !noalias !9
+              %m = load double, double addrspace(11)* %n, align 8, !tbaa !1, !alias.scope !10, !noalias !11
+              %r = fadd double %c, %m
+              ret double %r
+            }
+
+            define double @notinlined(double addrspace(11)* %n) {
+            top:
+              %c = load double, double addrspace(11)* %n, align 8, !tbaa !6, !alias.scope !8, !noalias !9
+              ret double %c
+            }
+
+            !0 = !{!"jtbaa"}
+            !1 = !{!2, !2, i64 0}
+            !2 = !{!"jtbaa_immut", !3, i64 0}
+            !3 = !{!"jtbaa_value", !4, i64 0}
+            !4 = !{!"jtbaa_data", !5, i64 0}
+            !5 = !{!"jtbaa", !0, i64 0}
+            !6 = !{!7, !7, i64 0, i64 0}
+            !7 = !{!"jtbaa_const", !5, i64 0}
+            !8 = !{!12}
+            !9 = !{!13}
+            !10 = !{!13}
+            !11 = !{!12}
+            !12 = !{!"jnoalias_const", !14}
+            !13 = !{!"jnoalias_data", !14}
+            !14 = !{!"jnoalias"}
+            """
+        )
+        Enzyme.Compiler.remove_alwaysinline_roots!(mod)
+
+        rule = [inst for bb in blocks(functions(mod)["rule"]) for inst in instructions(bb) if inst isa LLVM.LoadInst]
+        # The load of constant memory loses the claim once the function can be
+        # inlined into the one that initializes that memory...
+        for kind in ("tbaa", "alias.scope", "noalias")
+            @test !haskey(metadata(rule[1]), kind)
+            # ...and a load that makes no such claim keeps its metadata.
+            @test haskey(metadata(rule[2]), kind)
+        end
+
+        # A function that is not inlined keeps the claim, which holds there.
+        kept = first(inst for bb in blocks(functions(mod)["notinlined"]) for inst in instructions(bb) if inst isa LLVM.LoadInst)
+        for kind in ("tbaa", "alias.scope", "noalias")
+            @test haskey(metadata(kept), kind)
+        end
+    end
+end
