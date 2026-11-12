@@ -683,27 +683,40 @@ end
         y .= x .* theta
         return sum(y)
     end
+    # Broadcasting a `Const` array into an active one needs runtime activity
+    # (the broadcast may alias the two), so the `Const(theta)` cases use a loop.
+    function sum_update_loop(y, x, theta)
+        for i in eachindex(y)
+            y[i] = x[i] * theta[i]
+        end
+        return sum(y)
+    end
     y = zeros(3)
     x = [2.0, 2.0, 2.0]
     theta = [3.0, 3.0, 3.0]
 
-    res = gradient(Forward, sum_update, y, x, Const(theta))
+    res = gradient(Forward, sum_update_loop, y, x, Const(theta))
     @test res[1] == [0.0, 0.0, 0.0]
     @test res[2] == [3.0, 3.0, 3.0]
     @test res[3] === nothing
 
-    res_primal = gradient(ForwardWithPrimal, sum_update, y, x, Const(theta))
+    res_primal = gradient(ForwardWithPrimal, sum_update_loop, y, x, Const(theta))
     @test res_primal.val == 18.0
     @test res_primal.derivs[1] == [0.0, 0.0, 0.0]
     @test res_primal.derivs[2] == [3.0, 3.0, 3.0]
     @test res_primal.derivs[3] === nothing
 
     for chunk in (Val(1), Val(2), Val(3))
-        res_c = gradient(Forward, sum_update, y, x, Const(theta); chunk)
+        res_c = gradient(Forward, sum_update_loop, y, x, Const(theta); chunk)
         @test res_c[1] == [0.0, 0.0, 0.0]
         @test res_c[2] == [3.0, 3.0, 3.0]
         @test res_c[3] === nothing
     end
+
+    res_ra = gradient(set_runtime_activity(Forward), sum_update, y, x, Const(theta))
+    @test res_ra[1] == [0.0, 0.0, 0.0]
+    @test res_ra[2] == [3.0, 3.0, 3.0]
+    @test res_ra[3] === nothing
 
     res_scalar = gradient(Forward, sum_update, zeros(3), [1.0, 2.0, 3.0], 0.5)
     @test res_scalar[1] == [0.0, 0.0, 0.0]
