@@ -880,7 +880,8 @@ end
 invoke_energy(sys, x) = invoke_pot(InvokeSys(map(g -> invoke_update(g, x), sys.gis)))
 
 @testset "Boxed result of an unspecialised invoke stored past maxtypeoffset" begin
-    sys = InvokeSys((InvokeBig(ntuple(_ -> [1.0], 64)), InvokeFactor(0.0)))
+    # 512 bytes of pointers, so the factor is at byte 512 on 32- and 64-bit platforms
+    sys = InvokeSys((InvokeBig(ntuple(_ -> [1.0], 512 ÷ sizeof(Ptr{Cvoid}))), InvokeFactor(0.0)))
     @test fieldoffset(typeof(sys), 1) + fieldoffset(typeof(sys.gis), 2) > 500
     x = [0.3, 0.32, 0.35]
     dx = zero(x)
