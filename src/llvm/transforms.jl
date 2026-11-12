@@ -3773,7 +3773,7 @@ function md_node_name(@nospecialize(md))::String
     md isa LLVM.MDNode || return ""
     ops = operands(md)
     (length(ops) >= 1 && ops[1] isa LLVM.MDString) || return ""
-    return string(ops[1])
+    return convert(String, ops[1])
 end
 
 """
