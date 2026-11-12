@@ -529,7 +529,9 @@ sum_dims_2676(A) = sum(A; dims = 1)
 mul_ret_2676!(C, A, B) = (mul!(C, A, B); C)
 tup_mul_2676!(C, A, B) = (mul!(C, A, B); (C, B))
 
-if Base.get_extension(EnzymeTestUtils, :EnzymeTestUtilsGPUArraysCoreExt) !== nothing
+# The Downgrade job tests against the registered EnzymeTestUtils, whose
+# GPUArraysCore extension predates the methods tested here.
+if pkgversion(EnzymeTestUtils) >= v"0.2.10"
     @testset "EnzymeTestUtils GPUArraysCore extension (#2676)" begin
         JLArrays.allowscalar(false)
         try
