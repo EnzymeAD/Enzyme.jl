@@ -190,7 +190,10 @@ end
     host_target = isdefined(GPUCompiler, :NativeCompilerTarget) ? GPUCompiler.NativeCompilerTarget(; jlruntime = true) : GPUCompiler.DefaultCompilerTarget()
     for fn in (issue3962_kern_no_rule, issue3962_kern_fwd_rule, issue3962_kern_rev_rule)
         source = GPUCompiler.methodinstance(typeof(fn), sig)
-        config = CompilerConfig(host_target, params; kernel = false)
+        # This checks what Enzyme emits, not that the host runtime is usable
+        # from a kernel: off Linux, GPUCompiler's validation rejects the call
+        # that fetches the task (`ijl_get_pgcstack`, `pthread_getspecific`).
+        config = CompilerConfig(host_target, params; kernel = false, validate = false)
         job = CompilerJob(source, config, world)
         ir_str = GPUCompiler.JuliaContext() do ctx
             ir, _ = GPUCompiler.compile(:llvm, job)
