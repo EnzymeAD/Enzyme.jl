@@ -407,6 +407,12 @@ end
 end
 
 @inline function my_methodinstance(@nospecialize(mode::Union{Missing, EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
+    if mode !== missing && isassigned(ENZYME_CONTEXT)
+        ctx = ENZYME_CONTEXT[]
+        if ctx.job !== nothing && ctx.world == world
+            return my_methodinstance(GPUCompiler.method_table_view(ctx.job), ft, tt, world, min_world, max_world)
+        end
+    end
     interp = if mode === missing # TODO: PrimalMode
         Core.Compiler.NativeInterpreter(world)
     else
