@@ -184,6 +184,40 @@ All arguments are copied before being passed to `f`, so that `fnew` is non-mutat
 - `ignores`: Collection of `Bool`s, the same length as `xs`.
   If `ignores[i] === true`, then `xs[i]` is ignored; `∂xs[i] === NoTangent()`.
 =#
+# Like Base.deepcopy_internal, but also memoizes mutable AbstractArrays (such as
+# GPUArrays.AbstractGPUArray) whose Base.deepcopy_internal ignores the IdDict.
+function _deepcopy(x, d::IdDict)
+    isbitstype(typeof(x)) && return x
+    haskey(d, x) && return d[x]
+    if x isa Tuple
+        return Tuple(Any[_deepcopy(xi, d) for xi in x])
+    elseif x isa NamedTuple
+        return NamedTuple{keys(x)}(_deepcopy(Tuple(x), d))
+    elseif x isa Array
+        if isbitstype(eltype(x))
+            y = copy(x)
+            d[x] = y
+            return y
+        end
+        y = similar(x)
+        d[x] = y
+        for i in eachindex(x)
+            if isassigned(x, i)
+                y[i] = _deepcopy(x[i], d)
+            end
+        end
+        return y
+    elseif x isa AbstractArray && ismutable(x)
+        y = Base.deepcopy_internal(x, d)
+        if !haskey(d, x)
+            d[x] = y
+        end
+        return y
+    else
+        return Base.deepcopy_internal(x, d)
+    end
+end
+
 function _wrap_reverse_function(active_return, f, xs, ignores)
     function fnew(sigargs...)
         callargs = Any[]
@@ -194,9 +228,9 @@ function _wrap_reverse_function(active_return, f, xs, ignores)
 
         for (i, (x, ignore)) in enumerate(zip(xs, ignores))
             if ignore
-                push!(callargs, Base.deepcopy_internal(x, inputs))
+                push!(callargs, _deepcopy(x, inputs))
             else
-                arg = Base.deepcopy_internal(sigargs[j], inputs)
+                arg = _deepcopy(sigargs[j], inputs)
                 push!(callargs, arg)
                 push!(retargs, arg)
                 j += 1
@@ -207,11 +241,11 @@ function _wrap_reverse_function(active_return, f, xs, ignores)
         @assert length(retargs) == count(!, ignores)
 
         # if an arg and a return alias, do not consider the contribution from the arg as returned here,
-        # it will already be taken into account. This is implemented using the deepcopy_internal, which
+        # it will already be taken into account. This is implemented using _deepcopy, which
         # will add all objects inside the return into the dict `zeros`.
         zeros = IdDict()
-        origRet = Base.deepcopy_internal(f, inputs)(callargs...)
-        Base.deepcopy_internal(origRet, zeros)
+        origRet = _deepcopy(f, inputs)(callargs...)
+        _deepcopy(origRet, zeros)
 
         # we will now explicitly zero all objects returned, and replace any of the args with this
         # zero, if the input and output alias.
@@ -219,7 +253,7 @@ function _wrap_reverse_function(active_return, f, xs, ignores)
             for k in keys(zeros)
                 zeros[k] = zero_tangent(k)
             end
-            return (origRet, Base.deepcopy_internal(retargs, zeros)...)
+            return (origRet, _deepcopy(retargs, zeros)...)
         else
             return (origRet, retargs...)
         end
