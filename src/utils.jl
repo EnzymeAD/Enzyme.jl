@@ -377,6 +377,75 @@ function add_edge!(edges::Vector{Any}, mi::Core.MethodInstance)
     return edges
 end
 
+"""
+    add_dispatch_edge!(edges, sig, world, min_world, max_world)
+
+Add the edge for a call of signature `sig` dispatched in `world`: the method instance the
+call resolves to, so that a method defined later that takes the call over invalidates the
+code, or, when no method matches, the signature itself, so that defining one does.
+
+The method instance is the one of `sig` itself, and not the one Julia would compile for the
+call (which widens `@nospecialize`d arguments): the edge has to be invalidated by a method
+that takes over this call, and not by one that takes over any call of the method.
+
+An edge only catches methods defined after the code is cached. When `world` is not the
+newest one, the dispatch may already have changed in a later world, so `min_world` and
+`max_world` are narrowed to the worlds the lookup holds in; the caller bounds the code it
+returns with them (see [`bound_worlds!`](@ref)).
+
+A generator that calls a function packages add methods to, and bakes the result into the
+code it returns, records the call with this so that the code is only as old as the methods
+it was built from.
+"""
+function add_dispatch_edge!(edges::Vector{Any}, @nospecialize(sig::Type), world::UInt, min_world::Base.RefValue{UInt}, max_world::Base.RefValue{UInt})
+    lo = Ref{UInt}(typemin(UInt))
+    hi = Ref{UInt}(typemax(UInt))
+    match = lookup_world(sig, world, nothing, lo, hi)
+    min_world[] = max(min_world[], lo[])
+    max_world[] = min(max_world[], hi[])
+    if match === nothing
+        return add_edge!(edges, sig)
+    end
+    match = match::Core.MethodMatch
+    mi = ccall(
+        :jl_specializations_get_linfo, Ref{Core.MethodInstance},
+        (Any, Any, Any), match.method, match.spec_types, match.sparams
+    )
+    return add_edge!(edges, mi)
+end
+
+"""
+    bound_worlds!(ci, min_world, max_world)
+
+Narrow the worlds the generated code `ci` is valid in to `min_world:max_world`, the worlds
+the lookups it was built from hold in (see [`add_dispatch_edge!`](@ref)).
+"""
+function bound_worlds!(ci::Core.CodeInfo, min_world::Base.RefValue{UInt}, max_world::Base.RefValue{UInt})
+    ci.min_world = max(ci.min_world, min_world[])
+    ci.max_world = min(ci.max_world, max_world[])
+    return ci
+end
+
+"""
+    lower_generated_body(mod, stub, world, source, ex)
+
+Lower the expression `ex` a generator built into the `Core.CodeInfo` the generator
+returns, so that the generator can set the `CodeInfo`'s edges. The `stub` names the slots
+(`Core.GeneratedFunctionStub(identity, slotnames, Core.svec())`); `ex` must not refer to
+static parameters, the generator interpolates their values instead.
+
+Since Julia 1.12 the stub lowers the expression itself. Before, the runtime lowered the
+expression after the generator returned, which is too late to set edges.
+"""
+function lower_generated_body(mod::Module, stub::Core.GeneratedFunctionStub, world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(ex))
+    @static if VERSION >= v"1.12-"
+        return stub(world, source, ex)::Core.CodeInfo
+    else
+        lam = stub(world, source, ex)
+        return ccall(:jl_expand_and_resolve, Any, (Any, Any, Any), lam, mod, Core.svec())::Core.CodeInfo
+    end
+end
+
 @inline function my_methodinstance(@nospecialize(method_table::Union{Core.Compiler.MethodTableView, Nothing}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
 
     if min_world === nothing

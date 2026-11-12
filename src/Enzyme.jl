@@ -169,6 +169,9 @@ mutable struct EnzymeContext
     inserted_values::Dict{String, Any}
     relocations::Vector{Any}
     bakes::Bool
+    # The types whose activity the compilation asked for, each with the set of flag
+    # combinations as a bit mask; see `Compiler.record_activity_query!`.
+    activity_queries::IdDict{Any, UInt8}
     EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
@@ -179,7 +182,8 @@ mutable struct EnzymeContext
         Dict{String, Ptr{Cvoid}}(),
         Dict{String, Any}(),
         Any[],
-        true
+        true,
+        IdDict{Any, UInt8}()
     )
 end
 
