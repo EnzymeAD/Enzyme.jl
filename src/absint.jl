@@ -614,6 +614,37 @@ end
 
 const TypesNotToDisect = Set{Type}([BigFloat])
 
+# The type of the boxed result of `julia.call2(jl_invoke, mi, f, args...)`, a call to a method
+#   instance that Julia didn't specialise (e.g. on a `DataType` argument). The caller unboxes
+#   the result with untyped loads, so its type is otherwise lost. Inferring the call with the
+#   argument types known here, constant values giving e.g. `Type{Float64}` rather than
+#   `DataType`, recovers it when the result is concrete. Returns `nothing` otherwise.
+function invoke_return_type(arg::LLVM.CallInst, enzyme_ctx::Union{EnzymeContext, Nothing})
+    enzyme_ctx === nothing && return nothing
+    ops = arg_operands_view(arg)
+    legal, mi = absint(ops[2], enzyme_ctx)
+    mi = unbind(mi)
+    if legal && mi isa Core.CodeInstance
+        mi = mi.def
+    end
+    (legal && mi isa Core.MethodInstance) || return nothing
+    types = Any[]
+    for v in @view ops[3:end]
+        legal, val = absint(v, enzyme_ctx)
+        if legal
+            push!(types, Core.Typeof(unbind(val)))
+            continue
+        end
+        legal, typ, _ = abs_typeof(v, enzyme_ctx)
+        legal || return nothing
+        push!(types, typ)
+    end
+    TT = Tuple{types...}
+    TT <: mi.specTypes || return nothing
+    RT = primal_return_type_world(Reverse, enzyme_ctx.world, TT)
+    return Base.isconcretetype(RT) ? RT : nothing
+end
+
 function abs_typeof(
         @nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing},
         partial::Bool = false, seenphis = Set{LLVM.PHIInst}()
@@ -680,6 +711,16 @@ function abs_typeof(
         if nm == "julia.gc_loaded"
             legal, res, byref = abs_typeof(operands(arg)[2], enzyme_ctx, partial, seenphis)
             return legal, res, byref
+        end
+
+        if nm == "julia.call2"
+            callee = operands(arg)[1]
+            if isa(callee, LLVM.Function) && in(LLVM.name(callee), ("jl_invoke", "ijl_invoke"))
+                RT = invoke_return_type(arg, enzyme_ctx)
+                if RT !== nothing
+                    return (true, RT, ismutabletype(RT) ? GPUCompiler.MUT_REF : GPUCompiler.BITS_REF)
+                end
+            end
         end
 
         for (fname, ty) in (

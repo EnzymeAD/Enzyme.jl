@@ -852,3 +852,39 @@ inline_same_pair(p) = inline_same.(p)
         @test all(all(dt.data ≈ 2 .* t.data for (t, dt) in zip(p, dp)) for (p, dp) in zip(x, dx))
     end
 end
+
+# A float stored past `maxtypeoffset` bytes into an object, whose value is read back with an
+#   untyped load from the boxed result of an unspecialised call (on a `DataType` argument)
+struct InvokeBig{N}
+    data::NTuple{N, Vector{Float64}}
+end
+invoke_update(b::InvokeBig, x) = b
+
+struct InvokeFactor
+    factor::Float64
+end
+
+@noinline function invoke_factor(x, F)
+    s = 0.0
+    for xi in x
+        s += xi^6
+    end
+    return (convert(F, s),)
+end
+invoke_update(c::InvokeFactor, x) = InvokeFactor(invoke_factor(x, typeof(c.factor))...)
+
+mutable struct InvokeSys{G}
+    gis::G
+end
+@noinline invoke_pot(sys) = sys.gis[2].factor
+invoke_energy(sys, x) = invoke_pot(InvokeSys(map(g -> invoke_update(g, x), sys.gis)))
+
+@testset "Boxed result of an unspecialised invoke stored past maxtypeoffset" begin
+    # 512 bytes of pointers, so the factor is at byte 512 on 32- and 64-bit platforms
+    sys = InvokeSys((InvokeBig(ntuple(_ -> [1.0], 512 ÷ sizeof(Ptr{Cvoid}))), InvokeFactor(0.0)))
+    @test fieldoffset(typeof(sys), 1) + fieldoffset(typeof(sys.gis), 2) > 500
+    x = [0.3, 0.32, 0.35]
+    dx = zero(x)
+    autodiff(Reverse, invoke_energy, Active, Duplicated(sys, Enzyme.make_zero(sys)), Duplicated(x, dx))
+    @test dx ≈ 6 .* x .^ 5
+end
