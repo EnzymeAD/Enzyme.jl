@@ -1260,7 +1260,9 @@ end
                     jd = Enzyme.Compiler.JIT.add!(dst)
                     Enzyme.Compiler.JIT.lookup(jd, fn_name)
                 end
-                res = ccall(reinterpret(Ptr{Cvoid}, addr.ptr), Cdouble, (Cdouble, Cdouble, Int64), 2.0, 1.0, idx)
+                # `addr.ptr` is a 64-bit address even where pointers are 32 bits.
+                fptr = Ptr{Cvoid}(addr.ptr % UInt)
+                res = ccall(fptr, Cdouble, (Cdouble, Cdouble, Int64), 2.0, 1.0, idx)
                 @test res == 2.0 * (idx + 1) + 1.0
             end
         end
