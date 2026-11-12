@@ -40,6 +40,7 @@ import Enzyme:
     create_fresh_codeinfo,
     add_edge!,
     add_dispatch_edge!,
+    bound_worlds!,
     arg_operands_view
 
 using Enzyme
@@ -6444,9 +6445,13 @@ end
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
-    mod, meta = @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
+    enzyme_ctx = EnzymeContext(job.world)
+    mod, meta = @with ENZYME_CONTEXT => enzyme_ctx begin
         compile_unhooked_impl(output, job)
     end
+    # `meta.edges` are the context's edges: the code built from this compilation is only as
+    # current as the activity results the compilation used.
+    add_activity_query_edges!(meta.edges, enzyme_ctx.activity_queries, job.world)
     # A host derivative compiled on behalf of another job is linked into that job's module:
     # the module of the compilation in progress, for `autodiff_deferred` in the function it
     # differentiates, which takes up the values this compilation inserted. Without one, nothing

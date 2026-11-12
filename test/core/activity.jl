@@ -231,6 +231,83 @@ struct NotInAnyActivityResult end
     ci = only(code_instances(activity_instance(UnrelatedToTheCache)))
     @eval Enzyme.EnzymeRules.inactive_type(::Type{NotInAnyActivityResult}) = true
     @test ci.max_world == typemax(UInt)
+    # `is_mutable_array` does not specialize on its argument; the edge is still to the
+    # dispatch for this type, and not to the method as a whole.
+    @eval Enzyme.Compiler.is_mutable_array(::Type{NotInAnyActivityResult}) = true
+    @test ci.max_world == typemax(UInt)
     @test C.active_reg(UnrelatedToTheCache, Base.get_world_counter()) == C.ActiveState
     @test only(code_instances(activity_instance(UnrelatedToTheCache))) === ci
+end
+
+# An edge only catches the methods defined after the result is cached. A result first asked
+# for in an older world, when a hook method for the type already exists in a newer one, is
+# valid up to that method only.
+struct OldWorldFirst
+    x::Float64
+end
+struct OldWorldFirstGradient
+    x::Float64
+end
+old_world_first_nothrow() = Enzyme.Compiler.active_reg_nothrow(OldWorldFirst)
+old_world_first_const() = Enzyme.Compiler.guaranteed_const(OldWorldFirst)
+old_world_first_f(x, s) = x * s.x
+old_world_first_gradient() = Enzyme.gradient(Reverse, old_world_first_f, 2.0, OldWorldFirstGradient(3.0))
+
+@testset "activity first asked for in an older world" begin
+    C = Enzyme.Compiler
+    w1 = Base.get_world_counter()
+    @eval Enzyme.EnzymeRules.inactive_type(::Type{OldWorldFirst}) = true
+    @eval Enzyme.EnzymeRules.inactive_type(::Type{OldWorldFirstGradient}) = true
+    w2 = Base.get_world_counter()
+
+    @test C.active_reg(OldWorldFirst, w1) == C.ActiveState
+    ci = only(code_instances(activity_instance(OldWorldFirst)))
+    @test ci.max_world < w2
+    @test C.active_reg(OldWorldFirst, w2) == C.AnyState
+    @test C.active_reg(OldWorldFirst, w1) == C.ActiveState
+
+    @test Base.invoke_in_world(w1, old_world_first_nothrow) == C.ActiveState
+    @test Base.invoke_in_world(w1, old_world_first_const) == false
+    @test old_world_first_nothrow() == C.AnyState
+    @test old_world_first_const()
+
+    @test Base.invoke_in_world(w1, old_world_first_gradient) == (3.0, OldWorldFirstGradient(2.0))
+    @test old_world_first_gradient() == (3.0, nothing)
+end
+
+# A compiled thunk is only as current as the activity results its compilation used,
+# including those that depend on `eltype` of a mutable array type.
+mutable struct ThunkEltypeBox
+    x::Float64
+end
+Enzyme.Compiler.is_mutable_array(::Type{ThunkEltypeBox}) = true
+Base.eltype(::Type{ThunkEltypeBox}) = Float64
+thunk_eltype_f(b::ThunkEltypeBox) = b.x * b.x
+function thunk_eltype_grad()
+    b = ThunkEltypeBox(3.0)
+    db = ThunkEltypeBox(0.0)
+    Enzyme.autodiff(Reverse, thunk_eltype_f, Active, Duplicated(b, db))
+    return db.x
+end
+
+function thunk_instances(f)
+    cis = Core.CodeInstance[]
+    for m in methods(Enzyme.Compiler.thunk), mi in Base.specializations(m)
+        FA = Base.unwrap_unionall(mi.specTypes).parameters[3]
+        FA == Type{Const{typeof(f)}} || continue
+        append!(cis, code_instances(mi))
+    end
+    return cis
+end
+
+@testset "thunks depend on the activity results of their compilation" begin
+    C = Enzyme.Compiler
+    @test thunk_eltype_grad() == 6.0
+    cis = thunk_instances(thunk_eltype_f)
+    @test !isempty(cis)
+    @test all(ci -> ci.max_world == typemax(UInt), cis)
+    # The thunks built from the result are invalidated along with it.
+    @eval Base.eltype(::Type{ThunkEltypeBox}) = Nothing
+    @test all(ci -> ci.max_world < Base.get_world_counter(), cis)
+    @test C.active_reg(ThunkEltypeBox, Base.get_world_counter()) == C.AnyState
 end

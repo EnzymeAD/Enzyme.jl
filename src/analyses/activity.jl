@@ -176,7 +176,7 @@ end
 # `Core._call_in_world_total` before calling it. So plain dispatch here, including the calls
 # to the hooks packages add methods to (`is_mutable_array`, `inactive_type`, `eltype`), sees
 # the methods of that world, and not of the (older) world a generator runs in. Do not call
-# this directly from a generator; call `active_reg`.
+# this directly from a generator; call `active_reg` or `active_reg_with_deps`.
 #
 # `deps` collects the signatures of the dispatches the result depends on (the hooks, and
 # `eltype` of the mutable array types), so that code that bakes the result in gets an edge
@@ -453,8 +453,10 @@ Base.@nospecializeinfer @inline function active_reg_inner(
 end
 
 # The signatures of the hooks packages add methods to, and that change the result of
-# `active_reg`. Code that cannot name the types its activity results were computed for
-# (a compiled thunk) takes an edge on each of these; see `add_compilation_edges!`.
+# `active_reg`. Code built from a compilation takes an edge on each of these (see
+# `add_compilation_edges!`): they cover the queries the precise edges of
+# `add_activity_query_edges!` do not, those made outside the compilation's context and
+# those of a deferred compilation, which runs after its edges are set.
 const ActivityHookSigs = (
     Tuple{typeof(EnzymeRules.inactive_type), Type},
     Tuple{typeof(is_mutable_array), Type},
@@ -480,27 +482,34 @@ Base.@nospecializeinfer function active_reg_with_deps(@nospecialize(ST::Type), w
 end
 
 """
-    add_activity_edges!(edges, deps, world)
+    add_activity_edges!(edges, deps, world, min_world, max_world)
 
 Add the edges that keep code built from a result of [`active_reg_with_deps`](@ref)
 current: one on each dispatch in `deps`, resolved in `world`. These are method instance
 edges, which Julia closes when a method takes a dispatch over, and verifies against the
 loaded methods when a package image loads (unlike edges on a bare signature, which it
 only registers).
+
+`min_world` and `max_world` are narrowed to the worlds the dispatches hold in, see
+`add_dispatch_edge!`.
 """
-function add_activity_edges!(edges::Vector{Any}, deps::Vector{Any}, world::UInt)
+function add_activity_edges!(edges::Vector{Any}, deps::Vector{Any}, world::UInt, min_world::Base.RefValue{UInt}, max_world::Base.RefValue{UInt})
     for sig in deps
-        add_dispatch_edge!(edges, sig::Type, world)
+        add_dispatch_edge!(edges, sig::Type, world, min_world, max_world)
     end
     return edges
 end
 
-# The code of the generated functions below: the result as a constant, with the edges.
+# The code of the generated functions below: the result as a constant, with the edges, valid
+# in the worlds the dispatches the result depends on resolve as they do in `world`.
 function activity_codeinfo(fn, source::Union{Method, LineNumberNode}, world::UInt, slotnames::Core.SimpleVector, @nospecialize(T::Type), justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)
     state, deps = active_reg_with_deps(T, world, justActive, UnionSret, AbstractIsMixed)
     code = Any[Core.Compiler.ReturnNode(state)]
     ci = create_fresh_codeinfo(fn, source, world, slotnames, code)
-    ci.edges = add_activity_edges!(Any[], deps, world)
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    ci.edges = add_activity_edges!(Any[], deps, world, min_world, max_world)
+    bound_worlds!(ci, min_world, max_world)
     return ci
 end
 
@@ -538,6 +547,40 @@ end
     $(Expr(:meta, :generated, active_reg_flags_generator))
 end
 
+# The compilation running in the current dynamic scope asked for the activity of `T`: note
+# it in the compilation's context, for `add_activity_query_edges!`.
+function record_activity_query!(@nospecialize(T::Type), world::UInt, justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)
+    isassigned(ENZYME_CONTEXT) || return nothing
+    ctx = ENZYME_CONTEXT[]
+    ctx.world == world || return nothing
+    bit = 0x01 << (UInt8(justActive) | (UInt8(UnionSret) << 1) | (UInt8(AbstractIsMixed) << 2))
+    queries = ctx.activity_queries
+    queries[T] = (get(queries, T, 0x00)::UInt8) | bit
+    return nothing
+end
+
+"""
+    add_activity_query_edges!(edges, queries, world)
+
+Add an edge on the method instance of `active_reg_flags` for each activity result the
+compilation in `world` asked for (`queries`, see `record_activity_query!`). Julia
+invalidates such an instance when a dispatch its result depends on changes, including
+`eltype` of a mutable array type, which the compilation cannot take an edge on as a whole;
+the edge passes that on to the code built from the compilation.
+"""
+function add_activity_query_edges!(edges::Vector{Any}, queries::IdDict{Any, UInt8}, world::UInt)
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
+    for (T, bits) in queries
+        for i in 0x00:0x07
+            (bits::UInt8) & (0x01 << i) == 0x00 && continue
+            sig = Tuple{typeof(active_reg_flags), Type{T}, Val{i & 0x01 != 0x00}, Val{i & 0x02 != 0x00}, Val{i & 0x04 != 0x00}}
+            add_dispatch_edge!(edges, sig, world, min_world, max_world)
+        end
+    end
+    return edges
+end
+
 """
     active_reg(T, world; justActive=false, UnionSret=false, AbstractIsMixed=false)
 
@@ -547,8 +590,12 @@ Calls `active_reg_flags` in `world`, so the answer comes from the `CodeInstance`
 Julia keeps for `T` and the flags in that world, or from the analysis if there is none yet.
 `Core._call_in_world_total` changes the world also inside a generator, where this is
 called while a thunk compiles.
+
+Inside a compilation the query is recorded, and the code the compilation produces gets an
+edge on the instance that answered it (`add_activity_query_edges!`).
 """
 Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive = false, UnionSret = false, AbstractIsMixed = false)::ActivityState
+    record_activity_query!(ST, world, justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)
     return Core._call_in_world_total(world, active_reg_flags, ST, Val(justActive::Bool), Val(UnionSret::Bool), Val(AbstractIsMixed::Bool))::ActivityState
 end
 

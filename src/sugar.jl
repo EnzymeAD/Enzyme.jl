@@ -224,6 +224,8 @@ function gradient_generator(world::UInt, source::Union{Method, LineNumberNode}, 
     toemit = Expr[]
     states = Compiler.ActivityState[]
     edges = Any[]
+    min_world = Ref{UInt}(typemin(UInt))
+    max_world = Ref{UInt}(typemax(UInt))
 
     for (argidx, act, genty) in zip(rargs, acts, gentys)
         if genty <: Enzyme.Const
@@ -236,7 +238,7 @@ function gradient_generator(world::UInt, source::Union{Method, LineNumberNode}, 
             push!(states, Compiler.AnyState)
         else
             state, deps = Compiler.active_reg_with_deps(genty, world, false, false, false)
-            Compiler.add_activity_edges!(edges, deps, world)
+            Compiler.add_activity_edges!(edges, deps, world, min_world, max_world)
             push!(states, state)
         end
     end
@@ -306,7 +308,15 @@ function gradient_generator(world::UInt, source::Union{Method, LineNumberNode}, 
     slotnames = Core.svec(Symbol("#self#"), :rm, :f, :x, :args)
     stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
     ci = lower_generated_body(@__MODULE__, stub, world, source, body)
+    # Lowering may have given the code edges of its own (to the bindings it refers to, since
+    # Julia 1.12); keep them.
+    if isdefined(ci, :edges) && ci.edges !== nothing
+        for edge in ci.edges
+            push!(edges, edge)
+        end
+    end
     ci.edges = edges
+    Compiler.bound_worlds!(ci, min_world, max_world)
     return ci
 end
 
