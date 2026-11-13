@@ -6109,8 +6109,7 @@ function lower_convention(
     end
 
 
-    remove_alwaysinline_roots!(mod)
-    run!(AlwaysInlinerPass(), mod)
+    inline_alwaysinline!(mod)
     if !hasReturnsTwice
         delete!(wrapper_f.function_attributes, :returns_twice)
     end
@@ -6586,8 +6585,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
             end
         end
 
-        remove_alwaysinline_roots!(mod)
-        run!(AlwaysInlinerPass(), mod)
+        inline_alwaysinline!(mod)
         for fname in toremove
             if haskey(mod.functions, fname)
                 f = mod.functions[fname]
@@ -7222,8 +7220,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                 push!(toremove, f.name)
             end
         end
-        remove_alwaysinline_roots!(mod)
-        run!(AlwaysInlinerPass(), mod)
+        inline_alwaysinline!(mod)
         for fname in toremove
             if haskey(mod.functions, fname)
                 f = mod.functions[fname]

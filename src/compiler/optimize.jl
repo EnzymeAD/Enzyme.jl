@@ -30,6 +30,31 @@ SafeAtomicToRegularStorePass() = FunctionPass("safe_atomic_to_regular_store", sa
 Addr13NoAliasPass() = ModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = ModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
+"""
+    inline_alwaysinline!(mod)
+
+Inline the `alwaysinline` functions of `mod`, after SimplifyCFG on every function.
+
+The `AlwaysInlinerPass` of LLVM 18 computes the `BlockFrequencyInfo` of each callee. Its
+`BranchProbabilityInfo` is superlinear in the number of blocks in a loop. An unoptimized
+kernel body can have several 100k blocks, which mostly SimplifyCFG removes; without it
+the inliner takes minutes per such function.
+"""
+function inline_alwaysinline!(mod::LLVM.Module)
+    @dispose pb = PassBuilder() begin
+        register!(pb, RemoveAlwaysInlineRootsPass())
+        add!(pb, ModulePassManager()) do mpm
+            add!(mpm, FunctionPassManager()) do fpm
+                add!(fpm, SimplifyCFGPass())
+            end
+            add!(mpm, RemoveAlwaysInlineRootsPass())
+            add!(mpm, AlwaysInlinerPass())
+        end
+        run!(pb, mod)
+    end
+    return
+end
+
 # `mark_loads_dereferenceable!` for the compilation `enzyme_ctx`.
 struct MarkLoadsDereferenceable
     enzyme_ctx::Union{EnzymeContext, Nothing}
