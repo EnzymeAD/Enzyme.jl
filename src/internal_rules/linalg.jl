@@ -456,6 +456,23 @@ _project(::Type{<:Real}, x) = x
 _project(::Type{<:Real}, x::Complex) = real(x)
 _project(::Type{<:Complex}, x) = x
 
+# dA[i, j] += α (dC * B')[i, j] for every stored entry (i, j) of dA, leaving its sparsity
+# pattern untouched.
+function _sparse_accumulate_outer!(dA::SparseArrays.AbstractSparseMatrixCSC, dC, B, α)
+    rows = SparseArrays.rowvals(dA)
+    vals = SparseArrays.nonzeros(dA)
+    T = promote_type(eltype(dA), eltype(dC))
+    @inbounds for j in axes(dA, 2), k in SparseArrays.nzrange(dA, j)
+        r = rows[k]
+        tmp = zero(T)
+        for ti in axes(dC, 2)
+            tmp += dC[r, ti] * conj(B[j, ti])
+        end
+        vals[k] += _project(eltype(dA), α * tmp)
+    end
+    return dA
+end
+
 function _muladdproject!(::Type{<:Number}, dB::AbstractArray, A::AbstractArray, C::AbstractArray, α)
     return LinearAlgebra.mul!(dB, A, C, α, true)
 end
@@ -525,15 +542,21 @@ function EnzymeRules.reverse(
                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[i]
                 dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[i]
                 # Now accumulate to preserve the correct sparsity pattern
-                I, J, _ = SparseArrays.findnz(dA)
-                for k in eachindex(I, J)
-                    Ik, Jk = I[k], J[k]
-                    # May need to widen if the eltype differ
-                    tmp = zero(promote_type(eltype(dA), eltype(dC)))
-                    for ti in axes(dC, 2)
-                        tmp += dC[Ik, ti] * conj(Bval[Jk, ti])
+                if dA isa SparseArrays.AbstractSparseMatrixCSC
+                    # Walk the stored entries of dA in place: same entries as `findnz(dA)`,
+                    # without allocating the index vectors or searching for each entry.
+                    _sparse_accumulate_outer!(dA, dC, Bval, conj(α.val))
+                else
+                    I, J, _ = SparseArrays.findnz(dA)
+                    for k in eachindex(I, J)
+                        Ik, Jk = I[k], J[k]
+                        # May need to widen if the eltype differ
+                        tmp = zero(promote_type(eltype(dA), eltype(dC)))
+                        for ti in axes(dC, 2)
+                            tmp += dC[Ik, ti] * conj(Bval[Jk, ti])
+                        end
+                        dA[Ik, Jk] += _project(eltype(dA), conj(α.val) * tmp)
                     end
-                    dA[Ik, Jk] += _project(eltype(dA), conj(α.val) * tmp)
                 end
                 # mul!(dA, dCs, Bval', α.val, true)
             end
