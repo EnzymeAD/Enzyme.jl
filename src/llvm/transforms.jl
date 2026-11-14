@@ -3878,6 +3878,30 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
             changed = true
         end
     end
+    changed |= simplify_large_alwaysinline!(mod)
+    return changed
+end
+
+"""
+    simplify_large_alwaysinline!(mod; minblocks = 1000)
+
+Run SimplifyCFG on every `alwaysinline` function in `mod` with more than `minblocks`
+basic blocks, before the `AlwaysInlinerPass` inlines it.
+
+The `AlwaysInlinerPass` of LLVM 18 computes the `BlockFrequencyInfo` of each callee. Its
+`BranchProbabilityInfo` is superlinear in the number of blocks in a loop. An unoptimized
+kernel body can have several 100k blocks, which mostly SimplifyCFG removes; without this
+the inliner takes minutes per such function.
+"""
+function simplify_large_alwaysinline!(mod::LLVM.Module; minblocks::Int = 1000)
+    changed = false
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        has_fn_attr(f, EnumAttribute("alwaysinline")) || continue
+        length(blocks(f)) > minblocks || continue
+        run!(SimplifyCFGPass(), f)
+        changed = true
+    end
     return changed
 end
 
