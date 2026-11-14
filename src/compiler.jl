@@ -2611,17 +2611,21 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
     end
 end
 
-# Since julia#60924 (1.14.0-DEV.1697) codegen attaches these operand bundles to
-# `julia.gc_alloc_obj`, and late-gc-lowering uses them to zero the GC pointer
-# fields of the object right where it is allocated. Enzyme copies them onto
-# shadow allocations, so such allocations need no explicit null stores.
+# Since julia#60924 (1.14.0-DEV.1697, backported to 1.13.4) codegen attaches
+# these operand bundles to `julia.gc_alloc_obj`, and late-gc-lowering uses them
+# to zero the GC pointer fields of the object right where it is allocated.
+# Enzyme copies them onto shadow allocations, so such allocations need no
+# explicit null stores. A Julia that does not lower the bundles never emits
+# them, so no version check is needed.
 function has_gc_zeroing_bundle(@nospecialize(inst::LLVM.Value))::Bool
-    @static if VERSION < v"1.14.0-DEV.1697"
-        return false
-    end
     isa(inst, LLVM.CallInst) || return false
-    for bundle in inst.operand_bundles
-        if bundle.tag == "julia.gc_alloc_ptr_offsets" || bundle.tag == "julia.gc_alloc_zeroinit"
+    for bundle in operand_bundles(inst)
+        tag = if isdefined(LLVM, :OperandBundleDef)
+            LLVM.tag_name(LLVM.OperandBundleDef(bundle))
+        else
+            LLVM.tag(bundle)
+        end
+        if tag == "julia.gc_alloc_ptr_offsets" || tag == "julia.gc_alloc_zeroinit"
             return true
         end
     end
