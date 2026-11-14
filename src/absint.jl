@@ -1228,7 +1228,7 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
                 break
             end
         end
-        
+
         larg = nothing
         if LLVM.API.LLVMGetValueKind(ce) == LLVM.API.LLVMGlobalAliasValueKind
             larg = LLVM.Value(ccall((:LLVMAliasGetAliasee, LLVM.API.libllvm), LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef,), ce))

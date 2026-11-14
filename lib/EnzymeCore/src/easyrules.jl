@@ -218,12 +218,12 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = needs_primal(config)
-            for expr in gensetup                
+            for expr in gensetup
                 if uses_symbol(expr, :Ω)
                     has_omega = true
                 end
             end
-            
+
             tosum0 = $tosum0
 
             N = $N
@@ -296,7 +296,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 for w in 1:W
                     outexpr = Symbol("outres_$w")
                     outres[w] = outexpr
-                    if $(esc(:RT)) <: Tuple                    
+                    if $(esc(:RT)) <: Tuple
                         push!(gensetup, Expr(:(=), outexpr, Expr(:tuple, outsyms[:, w]...)))
                     else
                         @assert length(tosum0) == 1
@@ -397,7 +397,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             gensetup = Expr[]
 
             has_omega = needs_primal(config)
-            
+
             inp_types = ($(map(esc, ann_names)...),)
             tosum0 = $tosum0
 
@@ -439,7 +439,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 for w in 1:W
                     outexpr = Symbol("outres_$w")
                     outres[w] = outexpr
-                    if $(esc(:RT)) <: Tuple                    
+                    if $(esc(:RT)) <: Tuple
                         push!(gensetup, Expr(:(=), outexpr, Expr(:tuple, outsyms[:, w]...)))
                     else
                         @assert length(tosum0) == 1
@@ -541,7 +541,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = false
-            for expr in gensetup                
+            for expr in gensetup
                 if uses_symbol(expr, :Ω)
                     has_omega = true
                 end
@@ -632,7 +632,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 dval = Expr(:call, getfield, dval, w)
                             end
 
-                            if RT <: Tuple        
+                            if RT <: Tuple
                                 dval = Expr(:call, getfield, dval, o)
                             else
                                 @assert length(tosum0) == 1

@@ -418,7 +418,7 @@ else
             st0 = TypeTree(API.DT_Pointer, -1, ctx)
             only!(st0, -1)
             merge!(tt, st0)
-        end 
+        end
 
         shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
         for i = 0:(sizeof(Csize_t)-1)
@@ -440,7 +440,7 @@ else
         for f = 2:fieldcount(AT)
             offset = fieldoffset(AT, f)
             subT = typed_fieldtype(AT, f)
-            
+
             subtree = copy(typetree(subT, ctx, dl, seen))
 
             # Allocated inline so adjust first path
@@ -543,7 +543,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
             # FIXME: Handle union
             continue
         end
-        
+
         subtree = copy(typetree(subT, ctx, dl, seen))
 
         # Allocated inline so adjust first path
