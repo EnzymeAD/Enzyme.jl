@@ -2611,6 +2611,27 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
     end
 end
 
+# Whether Julia's late GC lowering will itself zero the GC pointers of the
+# allocation `inst`. Julia (1.13.4 and later) asks for that with an operand bundle
+# on the allocation call, and Enzyme gives the shadow of an allocation the bundles
+# of its primal. The zeroing is emitted once the allocation is lowered, after
+# optimization, so unlike a store emitted here it needs nothing to keep LLVM from
+# moving it past a safepoint.
+function has_gc_alloc_init_bundle(@nospecialize(inst::LLVM.Value))::Bool
+    isa(inst, LLVM.CallInst) || return false
+    for bunduse in operand_bundles(inst)
+        tag = if isdefined(LLVM, :OperandBundleDef)
+            LLVM.tag_name(LLVM.OperandBundleDef(bunduse))
+        else
+            LLVM.tag(bunduse)
+        end
+        if tag == "julia.gc_alloc_ptr_offsets" || tag == "julia.gc_alloc_zeroinit"
+            return true
+        end
+    end
+    return false
+end
+
 function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, Orig::LLVM.API.LLVMValueRef, idx::UInt64, prev::API.LLVMValueRef, used::UInt8)
     enzyme_ctx = enzyme_context()
     used = used != 0
@@ -2724,11 +2745,16 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         # we will explicitly zero the GC'd fields of the previous allocation.
 
         # Reverse mode will do similarly, except doing the shadow first
-        prev = LLVM.Instruction(prev)
-        B = LLVM.IRBuilder()
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
 
-	create_recursive_stores(B, Ty, prev, count)
+        # If the previous allocation has Julia zero its GC'd fields, they are
+        # already defined by the time of the subsequent allocation.
+        prev = LLVM.Instruction(prev)
+        if !has_gc_alloc_init_bundle(prev)
+            B = LLVM.IRBuilder()
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
+
+            create_recursive_stores(B, Ty, prev, count)
+        end
     end
     if (mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeCombined) && used
         # Zero any jlvalue_t inner elements of preceeding allocation.
@@ -2750,10 +2776,15 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         #   store orig[0] = jlvaluet
         #
         # Julia could decide to dead store eliminate the memset (not being read before the store of jlvaluet'), resulting in an error
-        B = LLVM.IRBuilder()
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
-	
-	create_recursive_stores(B, Ty, V, count)
+        #
+        # If the shadow allocation has Julia zero its GC'd fields, that zeroing
+        # cannot be eliminated, and Enzyme leaves those fields out of its memset.
+        if !has_gc_alloc_init_bundle(V)
+            B = LLVM.IRBuilder()
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
+
+            create_recursive_stores(B, Ty, V, count)
+        end
     end
 
     nothing

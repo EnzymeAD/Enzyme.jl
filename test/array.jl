@@ -417,3 +417,45 @@ f_deleteat_3708(v) = (deleteat!(v, 4:5); msum_3708(v))
         @test res ≈ vcat(1.0:3.0, [0.0, 0.0], 4.0:73.0)
     end
 end
+
+mutable struct FloatAndVector4051
+    x::Float64
+    v::Vector{Float64}
+end
+
+@noinline use_4051(m) = m.x * sum(m.v)
+struct_4051(x) = use_4051(FloatAndVector4051(@inbounds(x[1]), x))
+wrap_4051(x) = sum([x][1])
+first_4051(x) = sum(first([x, x]))
+setindex_4051(x) = (v = Vector{Vector{Float64}}(undef, 1); v[1] = x; sum(v[1]))
+push_4051(x) = (v = Vector{Float64}[]; push!(v, x); sum(v[1]))
+
+@testset "Allocations holding GC pointers (#4051)" begin
+    x = [1.0, 2.0]
+    for f in (wrap_4051, first_4051, setindex_4051, push_4051)
+        @test Enzyme.gradient(Reverse, f, x)[1] ≈ [1.0, 1.0]
+        @test Enzyme.gradient(Forward, f, x)[1] ≈ [1.0, 1.0]
+    end
+    @test Enzyme.gradient(Reverse, struct_4051, x)[1] ≈ [4.0, 1.0]
+    @test Enzyme.gradient(Forward, struct_4051, x)[1] ≈ [4.0, 1.0]
+end
+
+mutable struct Incomplete4051
+    x::Float64
+    v::Vector{Float64}
+    Incomplete4051(x) = new(x)
+end
+
+@noinline incomplete_4051(x) = Incomplete4051(@inbounds(x[1]))
+
+# Julia zeroes the GC pointers of the allocation itself from this version on, so
+# that Enzyme no longer stores `nothing` into them.
+@static if VERSION >= v"1.13.4"
+    @testset "Unassigned field stays undefined (#4051)" begin
+        res = autodiff(ForwardWithPrimal, incomplete_4051, Duplicated, Duplicated([3.0, 4.0], [1.0, 0.0]))
+        @test res[1].x == 1.0
+        @test res[2].x == 3.0
+        @test !isdefined(res[1], :v)
+        @test !isdefined(res[2], :v)
+    end
+end
