@@ -120,7 +120,7 @@ struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCom
     rt::Type{<:Annotation{T} where {T}}
     run_enzyme::Bool
     abiwrap::Bool
-    # Whether, in split mode, acessible primal argument data is modified
+    # Whether, in split mode, accessible primal argument data is modified
     # between the call and the split
     modifiedBetween::NTuple{N,Bool} where {N}
     # Whether to also return the primal
@@ -2350,8 +2350,8 @@ function julia_sanitize(
     val = LLVM.Value(val)
     B = LLVM.IRBuilder(B)
     if CheckNan[]
-        curent_bb = position(B)
-        fn = LLVM.parent(curent_bb)
+        current_bb = position(B)
+        fn = LLVM.parent(current_bb)
         mod = LLVM.parent(fn)
         ty = LLVM.value_type(val)
         vt = LLVM.VoidType()
@@ -2710,7 +2710,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     end
 
     if mode == API.DEM_ForwardMode && (used || idx != 0)
-        # Zero any jlvalue_t inner elements of preceeding allocation.
+        # Zero any jlvalue_t inner elements of preceding allocation.
 
         # Specifically in forward mode, you will first run the original allocation,
         # then all shadow allocations. These allocations will thus all run before
@@ -2719,7 +2719,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         #   %"orig'" = julia.gcalloc(...)
         #   store orig[0] = jlvaluet
         #   store "orig'"[0] = jlvaluet'
-        # As a result, by the time of the subsequent GC allocation, the memory in the preceeding
+        # As a result, by the time of the subsequent GC allocation, the memory in the preceding
         # allocation might be undefined, and trigger a GC error. To avoid this,
         # we will explicitly zero the GC'd fields of the previous allocation.
 
@@ -2731,7 +2731,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 	create_recursive_stores(B, Ty, prev, count)
     end
     if (mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeCombined) && used
-        # Zero any jlvalue_t inner elements of preceeding allocation.
+        # Zero any jlvalue_t inner elements of preceding allocation.
 
         # Specifically in reverse mode, you will run the original allocation,
         # after all shadow allocations. The shadow allocations will thus all run before any value may store into them. For example, as follows:
@@ -3170,9 +3170,9 @@ end
 
 function emit_inacterror(B::LLVM.API.LLVMBuilderRef, V::LLVM.API.LLVMValueRef, orig::LLVM.API.LLVMValueRef)
     B = LLVM.IRBuilder(B)
-    curent_bb = position(B)
+    current_bb = position(B)
     orig = LLVM.Value(orig)
-    fn = LLVM.parent(curent_bb)
+    fn = LLVM.parent(current_bb)
     mod = LLVM.parent(fn)
 
     bt = GPUCompiler.backtrace(orig)
@@ -4333,7 +4333,7 @@ function create_abi_wrapper(
 	    # Enzyme expects, arg, [w x darg], root, droot
 	    # Julia expects   arg, root, darg, droot
 	    # We already pushed arg
-	    # now params[i] referrs to root
+	    # now params[i] refers to root
 	    darg = nothing
 	    root = nothing
 	    droot = nothing

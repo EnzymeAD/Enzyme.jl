@@ -309,7 +309,7 @@ EnzymeRules.inactive_noinl(::typeof(det), ::UnitaryMatrix) = true
 
 ### [Easy Rules](@id man-easy-rule)
 
-The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matricies of numbers, or tuples thereof as arguments/result types. 
+The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matrices of numbers, or tuples thereof as arguments/result types. 
 
 When writing an [`EnzymeRules.@easy_rule`](@ref) one first describes the function signature one wants the derivative rule to apply to. In each subsequent line, one should write a tuple, where each element of the tuple represents the derivative of the corresponding input argument. In that sense writing an [`EnzymeRules.@easy_rule`](@ref) is equivalent to specifying the Jacobian. Inside of this tuple, one can call arbitrary Julia code.
 
