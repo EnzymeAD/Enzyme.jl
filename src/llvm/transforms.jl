@@ -2028,13 +2028,14 @@ function decay_tracked_base(@nospecialize(v::LLVM.Value))
             return v
         end
         if isa(v, LLVM.GetElementPtrInst) ||
-           isa(v, LLVM.BitCastInst) ||
-           isa(v, LLVM.AddrSpaceCastInst)
+                isa(v, LLVM.BitCastInst) ||
+                isa(v, LLVM.AddrSpaceCastInst)
             v = operands(v)[1]
             continue
         end
         return nothing
     end
+    return
 end
 
 function fix_decayaddr!(mod::LLVM.Module)

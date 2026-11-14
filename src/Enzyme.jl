@@ -244,53 +244,61 @@ include("internal_rules/math.jl")
 import .Compiler: CompilationException
 
 @inline function falses_from_args(N)
-    ntuple(Returns(false), Val(N))
+    return ntuple(Returns(false), Val(N))
 end
 @inline function trues_from_args(N)
-    ntuple(Returns(true), Val(N))
+    return ntuple(Returns(true), Val(N))
 end
 
-@inline function any_active(args::Vararg{Annotation,N}) where {N}
-    any(ntuple(Val(N)) do i
-        Base.@_inline_meta
-        arg = @inbounds args[i]
-        if arg isa Active
-            return true
-        elseif arg isa MixedDuplicated
-            return true
-        elseif arg isa BatchMixedDuplicated
-            return true
-        else
-            return false
-        end
-    end)
-end
-
-@inline function vaTypeof(args::Vararg{Any,N}) where {N}
-    return Tuple{(
+@inline function any_active(args::Vararg{Annotation, N}) where {N}
+    return any(
         ntuple(Val(N)) do i
             Base.@_inline_meta
-            Core.Typeof(args[i])
+            arg = @inbounds args[i]
+            if arg isa Active
+                return true
+            elseif arg isa MixedDuplicated
+                return true
+            elseif arg isa BatchMixedDuplicated
+                return true
+            else
+                return false
+            end
         end
-    )...}
+    )
 end
 
-@inline function vaEltypeof(args::Vararg{Any,N}) where {N}
-    return Tuple{(
-        ntuple(Val(N)) do i
-            Base.@_inline_meta
-            eltype(Core.Typeof(args[i]))
-        end
-    )...}
+@inline function vaTypeof(args::Vararg{Any, N}) where {N}
+    return Tuple{
+        (
+            ntuple(Val(N)) do i
+                Base.@_inline_meta
+                Core.Typeof(args[i])
+            end
+        )...
+    }
 end
 
-@inline function vaEltypes(args::Type{Ty}) where {Ty<:Tuple}
-    return Tuple{(
-        ntuple(Val(length(Ty.parameters))) do i
-            Base.@_inline_meta
-            eltype(Ty.parameters[i])
-        end
-    )...}
+@inline function vaEltypeof(args::Vararg{Any, N}) where {N}
+    return Tuple{
+        (
+            ntuple(Val(N)) do i
+                Base.@_inline_meta
+                eltype(Core.Typeof(args[i]))
+            end
+        )...
+    }
+end
+
+@inline function vaEltypes(args::Type{Ty}) where {Ty <: Tuple}
+    return Tuple{
+        (
+            ntuple(Val(length(Ty.parameters))) do i
+                Base.@_inline_meta
+                eltype(Ty.parameters[i])
+            end
+        )...
+    }
 end
 
 @inline function same_or_one_helper(current, next)
@@ -304,33 +312,33 @@ end
 end
 
 @inline same_or_one_rec(current) = current
-@inline same_or_one_rec(current, arg::BatchMixedDuplicated{T,N}, args...) where {T,N} =
+@inline same_or_one_rec(current, arg::BatchMixedDuplicated{T, N}, args...) where {T, N} =
     same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(
     current,
-    arg::Type{BatchMixedDuplicated{T,N}},
+    arg::Type{BatchMixedDuplicated{T, N}},
     args...,
-) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
-@inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T,N}, args...) where {T,N} =
+) where {T, N} = same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T, N}, args...) where {T, N} =
     same_or_one_rec(same_or_one_helper(current, N), args...)
-@inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T,N}}, args...) where {T,N} =
+@inline same_or_one_rec(current, arg::Type{BatchDuplicatedFunc{T, N}}, args...) where {T, N} =
     same_or_one_rec(same_or_one_helper(current, N), args...)
-@inline same_or_one_rec(current, arg::BatchDuplicated{T,N}, args...) where {T,N} =
+@inline same_or_one_rec(current, arg::BatchDuplicated{T, N}, args...) where {T, N} =
     same_or_one_rec(same_or_one_helper(current, N), args...)
-@inline same_or_one_rec(current, arg::Type{BatchDuplicated{T,N}}, args...) where {T,N} =
+@inline same_or_one_rec(current, arg::Type{BatchDuplicated{T, N}}, args...) where {T, N} =
     same_or_one_rec(same_or_one_helper(current, N), args...)
-@inline same_or_one_rec(current, arg::BatchDuplicatedNoNeed{T,N}, args...) where {T,N} =
+@inline same_or_one_rec(current, arg::BatchDuplicatedNoNeed{T, N}, args...) where {T, N} =
     same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(
     current,
-    arg::Type{BatchDuplicatedNoNeed{T,N}},
+    arg::Type{BatchDuplicatedNoNeed{T, N}},
     args...,
-) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
+) where {T, N} = same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg, args...) = same_or_one_rec(current, args...)
 
 @inline function same_or_one(defaultVal, args...)
     local_soo_res = same_or_one_rec(-1, args...)
-    if local_soo_res == -1
+    return if local_soo_res == -1
         defaultVal
     else
         local_soo_res
@@ -355,10 +363,10 @@ end
 end
 
 @inline function seed_complex_args(
-    seen,
-    seen2,
-    args::Vararg{Annotation,Nargs},
-) where {Nargs}
+        seen,
+        seen2,
+        args::Vararg{Annotation, Nargs},
+    ) where {Nargs}
     return ntuple(Val(Nargs)) do i
         Base.@_inline_meta
         arg = args[i]
@@ -380,8 +388,8 @@ end
     end
 end
 
-@inline function fuse_complex_results(results, args::Vararg{Annotation,Nargs}) where {Nargs}
-    ntuple(Val(Nargs)) do i
+@inline function fuse_complex_results(results, args::Vararg{Annotation, Nargs}) where {Nargs}
+    return ntuple(Val(Nargs)) do i
         Base.@_inline_meta
         if args[i] isa Active
             Compiler.recursive_add(
@@ -442,7 +450,7 @@ One can also request the original returned value of the computation.
 Example:
 
 ```jldoctest
-Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
+Enzyme.autodiff(ReverseWithPrimal, x -> x * x, Active(3.0))
 
 # output
 
@@ -456,21 +464,21 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     point values, but cannot do so for integer values in tuples and structs.
 """
 @inline function autodiff(
-    mode::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten},
-    f::FA,
-    ::Type{A0},
-    args::Vararg{Annotation,Nargs},
-) where {
-    FA<:Annotation,
-    A0<:Annotation,
-    ReturnPrimal,
-    RuntimeActivity,
-    StrongZero,
-    RABI<:ABI,
-    Holomorphic,
-    Nargs,
-    ErrIfFuncWritten,
-}
+        mode::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, RABI, Holomorphic, ErrIfFuncWritten},
+        f::FA,
+        ::Type{A0},
+        args::Vararg{Annotation, Nargs},
+    ) where {
+        FA <: Annotation,
+        A0 <: Annotation,
+        ReturnPrimal,
+        RuntimeActivity,
+        StrongZero,
+        RABI <: ABI,
+        Holomorphic,
+        Nargs,
+        ErrIfFuncWritten,
+    }
     tt′ = vaTypeof(args...)
     width = same_or_one(1, args...)
     if width == 0
@@ -496,7 +504,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             forward, adjoint = autodiff_thunk(
                 ReverseModeSplit{
                     ReturnPrimal,
-                    #=ReturnShadow=#false,
+                    #=ReturnShadow=# false,
                     RuntimeActivity,
                     StrongZero,
                     width,
@@ -504,7 +512,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     RABI,
                     Holomorphic,
                     ErrIfFuncWritten,
-                    #=ShadowInit=#true
+                    #=ShadowInit=# true,
                 }(),
                 FA,
                 width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width},
@@ -519,10 +527,10 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             end
         end
     elseif A0 <: Duplicated ||
-           A0 <: DuplicatedNoNeed ||
-           A0 <: BatchDuplicated ||
-           A0 <: BatchDuplicatedNoNeed ||
-           A0 <: BatchDuplicatedFunc
+            A0 <: DuplicatedNoNeed ||
+            A0 <: BatchDuplicated ||
+            A0 <: BatchDuplicatedNoNeed ||
+            A0 <: BatchDuplicatedFunc
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
 
@@ -619,7 +627,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     if A0 <: Active
         args = (args..., Compiler.default_adjoint(rt, Val(width)))
     end
-    thunk(f, args...)
+    return thunk(f, args...)
 end
 
 """
@@ -628,19 +636,19 @@ end
 Like [`autodiff`](@ref) but will try to extend f to an annotation, if needed.
 """
 @inline function autodiff(
-    mode::CMode,
-    f::F,
-    args::Vararg{Annotation,Nargs},
-) where {F,CMode<:Mode,Nargs}
-    autodiff(EnzymeCore.set_err_if_func_written(mode), Const(f), args...)
+        mode::CMode,
+        f::F,
+        args::Vararg{Annotation, Nargs},
+    ) where {F, CMode <: Mode, Nargs}
+    return autodiff(EnzymeCore.set_err_if_func_written(mode), Const(f), args...)
 end
 @inline function autodiff(
-    mode::CMode,
-    f::F,
-    ::Type{RT},
-    args::Vararg{Annotation,Nargs},
-) where {F,RT<:Annotation,CMode<:Mode,Nargs}
-    autodiff(EnzymeCore.set_err_if_func_written(mode), Const(f), RT, args...)
+        mode::CMode,
+        f::F,
+        ::Type{RT},
+        args::Vararg{Annotation, Nargs},
+    ) where {F, RT <: Annotation, CMode <: Mode, Nargs}
+    return autodiff(EnzymeCore.set_err_if_func_written(mode), Const(f), RT, args...)
 end
 
 """
@@ -649,10 +657,10 @@ end
 Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 """
 @inline function autodiff(
-    mode::CMode,
-    f::FA,
-    args::Vararg{Annotation,Nargs},
-) where {FA<:Annotation,CMode<:Mode,Nargs}
+        mode::CMode,
+        f::FA,
+        args::Vararg{Annotation, Nargs},
+    ) where {FA <: Annotation, CMode <: Mode, Nargs}
     tt = vaEltypeof(args...)
     rt = Compiler.primal_return_type(
         mode isa ForwardMode ? Forward : Reverse,
@@ -660,7 +668,7 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
         tt,
     )
     A = guess_activity(rt, mode)
-    autodiff(mode, f, A, args...)
+    return autodiff(mode, f, A, args...)
 end
 
 """
@@ -684,7 +692,7 @@ instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 Example returning both original return and derivative:
 
 ```jldoctest
-f(x) = x*x
+f(x) = x * x
 res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
@@ -695,7 +703,7 @@ res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0
 Example returning just the derivative:
 
 ```jldoctest
-f(x) = x*x
+f(x) = x * x
 ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 
 # output
@@ -704,14 +712,14 @@ f(x) = x*x
 ```
 """
 @inline function autodiff(
-    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
-    f::FA,
-    ::Type{A},
-    args::Vararg{Annotation,Nargs},
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-} where {ReturnPrimal,RABI<:ABI,Nargs,ErrIfFuncWritten,RuntimeActivity,StrongZero}
+        mode::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity, StrongZero},
+        f::FA,
+        ::Type{A},
+        args::Vararg{Annotation, Nargs},
+    ) where {
+        FA <: Annotation,
+        A <: Annotation,
+    } where {ReturnPrimal, RABI <: ABI, Nargs, ErrIfFuncWritten, RuntimeActivity, StrongZero}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -732,15 +740,15 @@ f(x) = x*x
     end
     RT = if A <: Duplicated && width != 1
         if A isa UnionAll
-            BatchDuplicated{T,width} where {T}
+            BatchDuplicated{T, width} where {T}
         else
-            BatchDuplicated{eltype(A),width}
+            BatchDuplicated{eltype(A), width}
         end
     elseif A <: DuplicatedNoNeed && width != 1
         if A isa UnionAll
-            BatchDuplicatedNoNeed{T,width} where {T}
+            BatchDuplicatedNoNeed{T, width} where {T}
         else
-            BatchDuplicatedNoNeed{eltype(A),width}
+            BatchDuplicatedNoNeed{eltype(A), width}
         end
     else
         A
@@ -771,7 +779,7 @@ f(x) = x*x
         Val(RuntimeActivity),
         Val(StrongZero)
     ) #=ShadowInit=#
-    thunk(f, args...)
+    return thunk(f, args...)
 end
 
 """
@@ -781,21 +789,21 @@ Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    mode::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten},
-    f::FA,
-    ::Type{A},
-    args::Vararg{Annotation,Nargs},
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    ReturnPrimal,
-    Nargs,
-    RABI<:ABI,
-    Holomorphic,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
+        mode::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, RABI, Holomorphic, ErrIfFuncWritten},
+        f::FA,
+        ::Type{A},
+        args::Vararg{Annotation, Nargs},
+    ) where {
+        FA <: Annotation,
+        A <: Annotation,
+        ReturnPrimal,
+        Nargs,
+        RABI <: ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
+    }
     tt′ = vaTypeof(args...)
     width = same_or_one(1, args...)
     if width == 0
@@ -817,7 +825,7 @@ code, as well as high-order differentiation.
         @assert A isa DataType
         rt = A
         if rt == Union{}
-	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
+            throw(ErrorException("Return type inferred to be Union{}. Giving up."))
         end
     end
 
@@ -828,21 +836,22 @@ code, as well as high-order differentiation.
     if A <: Active
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
             rs = ReverseModeSplit{
-                    ReturnPrimal,
-                    #=ReturnShadow=#false,
-                    RuntimeActivity,
-                    StrongZero,
-                    width,
-                    ModifiedBetweenT,
-                    RABI,
-                    Holomorphic,
-                    ErrIfFuncWritten,
-                    #=ShadowInit=#true
-                }()
+                ReturnPrimal,
+                #=ReturnShadow=# false,
+                RuntimeActivity,
+                StrongZero,
+                width,
+                ModifiedBetweenT,
+                RABI,
+                Holomorphic,
+                ErrIfFuncWritten,
+                #=ShadowInit=# true,
+            }()
             rt_annotation = width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width}
             TapeType = tape_type(
                 rs, FA, rt_annotation,
-                (tt′).parameters...)
+                (tt′).parameters...
+            )
             forward, adjoint = autodiff_deferred_thunk(
                 rs,
                 TapeType,
@@ -859,10 +868,10 @@ code, as well as high-order differentiation.
             end
         end
     elseif A <: Duplicated ||
-           A <: DuplicatedNoNeed ||
-           A <: BatchDuplicated ||
-           A <: BatchDuplicatedNoNeed ||
-           A <: BatchDuplicatedFunc
+            A <: DuplicatedNoNeed ||
+            A <: BatchDuplicated ||
+            A <: BatchDuplicatedNoNeed ||
+            A <: BatchDuplicatedFunc
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
 
@@ -898,16 +907,16 @@ code, as well as high-order differentiation.
     ) #=ShadowInit=#
 
     thunk =
-        Compiler.CombinedAdjointThunk{Ptr{Cvoid},FA,A2,tt′,width,ReturnPrimal}(adjoint_ptr)
+        Compiler.CombinedAdjointThunk{Ptr{Cvoid}, FA, A2, tt′, width, ReturnPrimal}(adjoint_ptr)
     if A <: Active
         args = (args..., Compiler.default_adjoint(rt, Val(width)))
     elseif A <: Duplicated ||
-           A <: DuplicatedNoNeed ||
-           A <: BatchDuplicated ||
-           A <: BatchDuplicatedNoNeed
+            A <: DuplicatedNoNeed ||
+            A <: BatchDuplicated ||
+            A <: BatchDuplicatedNoNeed
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
-    thunk(f, args...)
+    return thunk(f, args...)
 end
 
 """
@@ -917,20 +926,20 @@ Same as `autodiff(::ForwardMode, f, Activity, args...)` but uses deferred compil
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
-    f::FA,
-    ::Type{A},
-    args::Vararg{Annotation,Nargs},
-) where {
-    ReturnPrimal,
-    FA<:Annotation,
-    A<:Annotation,
-    Nargs,
-    RABI<:ABI,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
+        mode::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity, StrongZero},
+        f::FA,
+        ::Type{A},
+        args::Vararg{Annotation, Nargs},
+    ) where {
+        ReturnPrimal,
+        FA <: Annotation,
+        A <: Annotation,
+        Nargs,
+        RABI <: ABI,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
+    }
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -948,15 +957,15 @@ code, as well as high-order differentiation.
     end
     RT = if A <: Duplicated && width != 1
         if A isa UnionAll
-            BatchDuplicated{T,width} where {T}
+            BatchDuplicated{T, width} where {T}
         else
-            BatchDuplicated{eltype(A),width}
+            BatchDuplicated{eltype(A), width}
         end
     elseif A <: DuplicatedNoNeed && width != 1
         if A isa UnionAll
-            BatchDuplicatedNoNeed{T,width} where {T}
+            BatchDuplicatedNoNeed{T, width} where {T}
         else
-            BatchDuplicatedNoNeed{eltype(A),width}
+            BatchDuplicatedNoNeed{eltype(A), width}
         end
     else
         A
@@ -967,10 +976,10 @@ code, as well as high-order differentiation.
 
     if RT isa UnionAll
         rt = Compiler.primal_return_type(Forward, FT, tt)
-	if rt == Union{}
-	   rt = Nothing
-	end
-	rt = RT{rt}
+        if rt == Union{}
+            rt = Nothing
+        end
+        rt = RT{rt}
     else
         @assert RT isa DataType
         rt = RT
@@ -1000,8 +1009,8 @@ code, as well as high-order differentiation.
         Val(RuntimeActivity),
         Val(StrongZero)
     ) #=ShadowInit=#
-    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid},FA,rt,tt′,width,ReturnPrimal}(adjoint_ptr)
-    thunk(f, args...)
+    thunk = Compiler.ForwardModeThunk{Ptr{Cvoid}, FA, rt, tt′, width, ReturnPrimal}(adjoint_ptr)
+    return thunk(f, args...)
 end
 
 """
@@ -1032,12 +1041,12 @@ v = 3.3
 function f(A, v)
     res = A[1] * v
     A[1] = 0
-    res
+    return res
 end
 
 forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
 
-tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
+tape, result, shadow_result = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
 result, ∂v, ∂A
@@ -1048,35 +1057,35 @@ result, ∂v, ∂A
 ```
 """
 @inline function autodiff_thunk(
-    mode::ReverseModeSplit{
+        mode::ReverseModeSplit{
+            ReturnPrimal,
+            ReturnShadow,
+            RuntimeActivity,
+            StrongZero,
+            Width,
+            ModifiedBetweenT,
+            RABI,
+            #=Holomorphic=# false,
+            ErrIfFuncWritten,
+            ShadowInit,
+        },
+        ::Type{FA},
+        ::Type{A0},
+        args::Vararg{Type{<:Annotation}, Nargs},
+    ) where {
+        FA <: Annotation,
+        A0 <: Annotation,
         ReturnPrimal,
         ReturnShadow,
-        RuntimeActivity,
-        StrongZero,
         Width,
         ModifiedBetweenT,
-        RABI,
-        #=Holomorphic=#false,
+        RABI <: ABI,
+        Nargs,
         ErrIfFuncWritten,
-        ShadowInit
-    },
-    ::Type{FA},
-    ::Type{A0},
-    args::Vararg{Type{<:Annotation},Nargs},
-) where {
-    FA<:Annotation,
-    A0<:Annotation,
-    ReturnPrimal,
-    ReturnShadow,
-    Width,
-    ModifiedBetweenT,
-    RABI<:ABI,
-    Nargs,
-    ErrIfFuncWritten,
-    ShadowInit,
-    RuntimeActivity,
-    StrongZero
-}
+        ShadowInit,
+        RuntimeActivity,
+        StrongZero,
+    }
     width = if Width == 0
         w = same_or_one(1, args...)
         if w == 0
@@ -1108,7 +1117,7 @@ result, ∂v, ∂A
     else
         Val(0)
     end
-    Enzyme.Compiler.thunk(
+    return Enzyme.Compiler.thunk(
         opt_mi,
         FA,
         A,
@@ -1135,7 +1144,7 @@ Example:
 ```jldoctest
 
 autodiff(Reverse, Active(3.1)) do x
-  return x*x
+    return x * x
 end
 
 # output
@@ -1143,19 +1152,19 @@ end
 ```
 """
 @inline function autodiff(
-    f::Function,
-    m::MMode,
-    ::Type{A},
-    args::Vararg{Annotation,Nargs},
-) where {A<:Annotation,Nargs,MMode<:Mode}
-    autodiff(m, f, A, args...)
+        f::Function,
+        m::MMode,
+        ::Type{A},
+        args::Vararg{Annotation, Nargs},
+    ) where {A <: Annotation, Nargs, MMode <: Mode}
+    return autodiff(m, f, A, args...)
 end
 @inline function autodiff(
-    f::Function,
-    m::MMode,
-    args::Vararg{Annotation,Nargs},
-) where {Nargs,MMode<:Mode}
-    autodiff(m, f, args...)
+        f::Function,
+        m::MMode,
+        args::Vararg{Annotation, Nargs},
+    ) where {Nargs, MMode <: Mode}
+    return autodiff(m, f, args...)
 end
 
 """
@@ -1177,7 +1186,7 @@ a = 4.2
 b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
-f(x) = x*x
+f(x) = x * x
 forward = autodiff_thunk(ForwardWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64})
 ∂f_∂x, res = forward(Const(f), Duplicated(3.14, 1.0))
 
@@ -1193,7 +1202,7 @@ a = 4.2
 b = [2.2, 3.3]; ∂f_∂b = zero(b)
 c = 55; d = 9
 
-f(x) = x*x
+f(x) = x * x
 forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
 ∂f_∂x, = forward(Const(f), Duplicated(3.14, 1.0))
 
@@ -1203,20 +1212,20 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
 ```
 """
 @inline function autodiff_thunk(
-    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
-    ::Type{FA},
-    ::Type{A},
-    args::Vararg{Type{<:Annotation},Nargs},
-) where {
-    ReturnPrimal,
-    FA<:Annotation,
-    A<:Annotation,
-    RABI<:ABI,
-    Nargs,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
+        mode::ForwardMode{ReturnPrimal, RABI, ErrIfFuncWritten, RuntimeActivity, StrongZero},
+        ::Type{FA},
+        ::Type{A},
+        args::Vararg{Type{<:Annotation}, Nargs},
+    ) where {
+        ReturnPrimal,
+        FA <: Annotation,
+        A <: Annotation,
+        RABI <: ABI,
+        Nargs,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
+    }
     width = same_or_one(1, A, args...)
     if width == 0
         throw(ErrorException("Cannot differentiate with a batch size of 0"))
@@ -1242,7 +1251,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
     else
         Val(0)
     end
-    results = Enzyme.Compiler.thunk(
+    return results = Enzyme.Compiler.thunk(
         opt_mi,
         FA,
         A,
@@ -1260,35 +1269,35 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
 end
 
 @inline function tape_type(
-    mode::ReverseModeSplit{
+        mode::ReverseModeSplit{
+            ReturnPrimal,
+            ReturnShadow,
+            RuntimeActivity,
+            StrongZero,
+            Width,
+            ModifiedBetweenT,
+            RABI,
+            #=Holomorphic=# false,
+            ErrIfFuncWritten,
+            ShadowInit,
+        },
+        ::Type{FA},
+        ::Type{A},
+        args::Vararg{Type{<:Annotation}, Nargs},
+    ) where {
+        FA <: Annotation,
+        A <: Annotation,
         ReturnPrimal,
         ReturnShadow,
-        RuntimeActivity,
-        StrongZero,
         Width,
         ModifiedBetweenT,
-        RABI,
-        #=Holomorphic=#false,
+        RABI <: ABI,
+        Nargs,
         ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
         ShadowInit,
-    },
-    ::Type{FA},
-    ::Type{A},
-    args::Vararg{Type{<:Annotation},Nargs},
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    ReturnPrimal,
-    ReturnShadow,
-    Width,
-    ModifiedBetweenT,
-    RABI<:ABI,
-    Nargs,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero,
-    ShadowInit,
-}
+    }
     width = if Width == 0
         w = same_or_one(1, args...)
         if w == 0
@@ -1336,41 +1345,41 @@ end
     end
 end
 
-const tape_cache = Dict{UInt,Type}()
+const tape_cache = Dict{UInt, Type}()
 
 const tape_cache_lock = ReentrantLock()
 
 import .Compiler: remove_innerty, UnknownTapeType
 
 @inline function tape_type(
-    parent_job::Union{GPUCompiler.CompilerJob,Nothing},
-    mode::ReverseModeSplit{
+        parent_job::Union{GPUCompiler.CompilerJob, Nothing},
+        mode::ReverseModeSplit{
+            ReturnPrimal,
+            ReturnShadow,
+            RuntimeActivity,
+            StrongZero,
+            Width,
+            ModifiedBetweenT,
+            RABI,
+            #=Holomorphic=# false,
+            #=ErrIfFuncWritten=# false,
+            #=ShadowInit=# false,
+        },
+        ::Type{FA},
+        ::Type{A},
+        args::Vararg{Type{<:Annotation}, Nargs},
+    ) where {
+        FA <: Annotation,
+        A <: Annotation,
         ReturnPrimal,
         ReturnShadow,
-        RuntimeActivity,
-        StrongZero,
         Width,
         ModifiedBetweenT,
-        RABI,
-        #=Holomorphic=#false,
-        #=ErrIfFuncWritten=#false,
-        #=ShadowInit=#false,
-    },
-    ::Type{FA},
-    ::Type{A},
-    args::Vararg{Type{<:Annotation},Nargs},
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    ReturnPrimal,
-    ReturnShadow,
-    Width,
-    ModifiedBetweenT,
-    RABI<:ABI,
-    Nargs,
-    RuntimeActivity,
-    StrongZero,
-}
+        RABI <: ABI,
+        Nargs,
+        RuntimeActivity,
+        StrongZero,
+    }
     width = if Width == 0
         w = same_or_one(1, args...)
         if w == 0
@@ -1382,7 +1391,7 @@ import .Compiler: remove_innerty, UnknownTapeType
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = trues_from_args(1+length(args))
+        ModifiedBetween = trues_from_args(1 + length(args))
     else
         ModifiedBetween = ModifiedBetweenT
     end
@@ -1396,7 +1405,7 @@ import .Compiler: remove_innerty, UnknownTapeType
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
-        Tuple{FA,TT.parameters...},
+        Tuple{FA, TT.parameters...},
         API.DEM_ReverseModeGradient,
         width,
         Compiler.remove_innerty(A),
@@ -1430,25 +1439,25 @@ import .Compiler: remove_innerty, UnknownTapeType
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
     lock(tape_cache_lock)
 
-    try
+    return try
         obj = get(tape_cache, key, nothing)
         # If the tape is not cached, compile it
         if obj === nothing
 
-	    ts_ctx = Compiler.JuliaContext()
-	    ctx = Compiler.context(ts_ctx)
-	    Compiler.activate(ctx)
+            ts_ctx = Compiler.JuliaContext()
+            ctx = Compiler.context(ts_ctx)
+            Compiler.activate(ctx)
             try
                 _, meta = GPUCompiler.compile(:llvm, job)
                 obj = meta.TapeType
                 tape_cache[key] = obj
-		obj
-    	    finally
+                obj
+            finally
                 Compiler.deactivate(ctx)
-		Compiler.dispose(ts_ctx)
+                Compiler.dispose(ts_ctx)
             end
-	else
-	    obj
+        else
+            obj
         end
     finally
         unlock(tape_cache_lock)
@@ -1483,13 +1492,13 @@ v = 3.3
 function f(A, v)
     res = A[1] * v
     A[1] = 0
-    res
+    return res
 end
 
 TapeType = tape_type(ReverseSplitWithPrimal, Const{typeof(f)}, Active, Duplicated{typeof(A)}, Active{typeof(v)})
 forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Const{typeof(f)}, Active{Float64}, Duplicated{typeof(A)}, Active{typeof(v)})
 
-tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
+tape, result, shadow_result = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
 result, ∂v, ∂A
@@ -1500,37 +1509,37 @@ result, ∂v, ∂A
 ```
 """
 @inline function autodiff_deferred_thunk(
-    mode::ReverseModeSplit{
+        mode::ReverseModeSplit{
+            ReturnPrimal,
+            ReturnShadow,
+            RuntimeActivity,
+            StrongZero,
+            Width,
+            ModifiedBetweenT,
+            RABI,
+            #=Holomorphic=# false,
+            ErrIfFuncWritten,
+            ShadowInit,
+        },
+        tt::Type{TapeType},
+        fa::Type{FA},
+        a2::Type{A2},
+        args::Vararg{Type{<:Annotation}, Nargs},
+    ) where {
+        FA <: Annotation,
+        A2 <: Annotation,
+        TapeType,
         ReturnPrimal,
         ReturnShadow,
-        RuntimeActivity,
-        StrongZero,
         Width,
         ModifiedBetweenT,
-        RABI,
-        #=Holomorphic=#false,
+        RABI <: ABI,
+        Nargs,
         ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
         ShadowInit,
-    },
-    tt::Type{TapeType},
-    fa::Type{FA},
-    a2::Type{A2},
-    args::Vararg{Type{<:Annotation},Nargs},
-) where {
-    FA<:Annotation,
-    A2<:Annotation,
-    TapeType,
-    ReturnPrimal,
-    ReturnShadow,
-    Width,
-    ModifiedBetweenT,
-    RABI<:ABI,
-    Nargs,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero,
-    ShadowInit
-}
+    }
     @assert RABI == FFIABI
     width = if Width == 0
         w = same_or_one(1, args...)
@@ -1552,10 +1561,10 @@ result, ∂v, ∂A
 
     rt = if A2 isa UnionAll
         primal_tt = Tuple{map(eltype, args)...}
-	rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
-	A2{rt0}
+        rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
+        A2{rt0}
     else
-	A2
+        A2
     end
 
     primal_ptr = Compiler.deferred_codegen(
@@ -1589,32 +1598,32 @@ result, ∂v, ∂A
 
     RT = if A2 <: Duplicated && width != 1
         if A2 isa UnionAll
-            BatchDuplicated{T,width} where {T}
+            BatchDuplicated{T, width} where {T}
         else
-            BatchDuplicated{eltype(A2),width}
+            BatchDuplicated{eltype(A2), width}
         end
     elseif A2 <: DuplicatedNoNeed && width != 1
         if A2 isa UnionAll
-            BatchDuplicatedNoNeed{T,width} where {T}
+            BatchDuplicatedNoNeed{T, width} where {T}
         else
-            BatchDuplicatedNoNeed{eltype(A2),width}
+            BatchDuplicatedNoNeed{eltype(A2), width}
         end
     elseif A2 <: MixedDuplicated && width != 1
         if A2 isa UnionAll
-            BatchMixedDuplicated{T,width} where {T}
+            BatchMixedDuplicated{T, width} where {T}
         else
-            BatchMixedDuplicated{eltype(A2),width}
+            BatchMixedDuplicated{eltype(A2), width}
         end
     else
         A2
     end
 
     aug_thunk =
-        Compiler.AugmentedForwardThunk{Ptr{Cvoid},FA,rt,TT,width,ReturnPrimal,TapeType}(
-            primal_ptr,
-        )
-    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid},FA,rt,TT,width,TapeType}(adjoint_ptr)
-    aug_thunk, adj_thunk
+        Compiler.AugmentedForwardThunk{Ptr{Cvoid}, FA, rt, TT, width, ReturnPrimal, TapeType}(
+        primal_ptr,
+    )
+    adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid}, FA, rt, TT, width, TapeType}(adjoint_ptr)
+    return aug_thunk, adj_thunk
 end
 
 include("sugar.jl")
@@ -1636,10 +1645,10 @@ Example:
 ```julia
 Enzyme.@import_frule(typeof(Base.sort), Any);
 
-x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
+x = [1.0, 2.0, 0.0]; dx = [0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
 
-Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
-Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx, ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx, ddx)))
 Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
 Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
 

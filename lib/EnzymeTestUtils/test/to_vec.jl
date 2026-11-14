@@ -32,7 +32,7 @@ end
 
     @testset "array of floats" begin
         @testset for T in (Float32, Float64, ComplexF32, ComplexF64),
-                     sz in (2, (2, 3), (2, 3, 4))
+                sz in (2, (2, 3), (2, 3, 4))
 
             test_to_vec(randn(T, sz))
         end
@@ -94,7 +94,7 @@ end
 
     @testset "nested array" begin
         @testset for T in (Float32, Float64, ComplexF32, ComplexF64),
-                     sz in (2, (2, 3), (2, 3, 4))
+                sz in (2, (2, 3), (2, 3, 4))
 
             test_to_vec([randn(T, sz) for _ in 1:10])
         end
@@ -121,7 +121,7 @@ end
     end
 
     @testset "namedtuple" begin
-        x = (x="bar", y=randn(3), z=randn(), w=TestStruct(4.0, randn(2)))
+        x = (x = "bar", y = randn(3), z = randn(), w = TestStruct(4.0, randn(2)))
         test_to_vec(x)
         @test to_vec(x)[1] == vcat(x.y, x.z, x.w.x, x.w.a)
     end

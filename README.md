@@ -19,7 +19,7 @@ Enzyme.jl can be used by calling `autodiff` on a function to be differentiated a
 ```julia
 using Enzyme, Test
 
-f1(x) = x*x
+f1(x) = x * x
 # Returns a tuple of active returns, which in this case is simply (2.0,)
 @test first(autodiff(Reverse, f1, Active(1.0))[1]) ≈ 2.0
 ```

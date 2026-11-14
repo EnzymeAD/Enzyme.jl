@@ -12,10 +12,12 @@ This function is currently considered internal/experimental and may not respect 
 """
 function has_attribute_preserving_rule end
 
-function has_attribute_preserving_rule_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function has_attribute_preserving_rule_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(has_attribute_preserving_rule, TT; world, method_table, caller)
 end
 
@@ -30,10 +32,12 @@ This function is currently considered internal/experimental and may not respect 
 """
 function has_readonly_rule end
 
-function has_readonly_rule_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function has_readonly_rule_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(has_readonly_rule, TT; world, method_table, caller)
 end
 
@@ -184,7 +188,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
     arg_names = Symbol[]
     for sname in input_names
-        rname = Symbol(String(sname)[length("ann_")+1:end])
+        rname = Symbol(String(sname)[(length("ann_") + 1):end])
         push!(arg_names, rname)
         push!(exprs, Expr(:(=), rname, :($sname.val)))
     end
@@ -199,7 +203,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
             if Meta.isexpr(p, :macrocall) && p.args[1] == Symbol("@Constant")
                 continue
             end
-            push!(tosum, (i , sname, p))
+            push!(tosum, (i, sname, p))
         end
     end
 
@@ -213,17 +217,17 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
     return @strip_linenos quote
         # _ is the input derivative w.r.t. function internals. since we do not
         # allow closures/functors with @easy_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.forward($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, ::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
+        @generated function EnzymeCore.EnzymeRules.forward($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, ::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where {$(esc(:RT))}
             genexprs = Expr[$(exprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = needs_primal(config)
-            for expr in gensetup                
+            for expr in gensetup
                 if uses_symbol(expr, :Ω)
                     has_omega = true
                 end
             end
-            
+
             tosum0 = $tosum0
 
             N = $N
@@ -249,7 +253,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 dval = Expr(:call, getfield, dval, w)
                             end
 
-                            pname = Symbol("partial_", string(o), "_", string(i), "_",  sname)
+                            pname = Symbol("partial_", string(o), "_", string(i), "_", sname)
                             if !visited[o, i]
 
                                 # Descend through the rule to see if any users require the original result, Ω
@@ -296,7 +300,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 for w in 1:W
                     outexpr = Symbol("outres_$w")
                     outres[w] = outexpr
-                    if $(esc(:RT)) <: Tuple                    
+                    if $(esc(:RT)) <: Tuple
                         push!(gensetup, Expr(:(=), outexpr, Expr(:tuple, outsyms[:, w]...)))
                     else
                         @assert length(tosum0) == 1
@@ -355,16 +359,21 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
     ann_names = Symbol[]
     arg_names = Symbol[]
     for (i, sname) in enumerate(input_names)
-        rname = Symbol(String(sname)[length("ann_")+1:end])
+        rname = Symbol(String(sname)[(length("ann_") + 1):end])
         push!(ann_names, sname)
         push!(arg_names, rname)
         push!(exprs, Expr(:(=), rname, Expr(:call, getfield, sname, :(:val))))
-        push!(revexprs, Expr(:(=), rname,
-            Expr(:if,
-                Expr(:call, Base.isa, :(cache[($i)]), Nothing),
-                Expr(:call, getfield, sname, :(:val)),
-                :(cache[($i)])
-                )))
+        push!(
+            revexprs, Expr(
+                :(=), rname,
+                Expr(
+                    :if,
+                    Expr(:call, Base.isa, :(cache[($i)]), Nothing),
+                    Expr(:call, getfield, sname, :(:val)),
+                    :(cache[($i)])
+                )
+            )
+        )
     end
 
     tosum0 = Vector{Tuple{Int, Symbol, Any}}[]
@@ -377,7 +386,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             if Meta.isexpr(p, :macrocall) && p.args[1] == Symbol("@Constant")
                 continue
             end
-            push!(tosum, (i , sname, p))
+            push!(tosum, (i, sname, p))
         end
     end
 
@@ -388,16 +397,16 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
     N = length(inputs)
 
-    @strip_linenos quote
+    return @strip_linenos quote
 
         # _ is the input derivative w.r.t. function internals. since we do not
         # allow closures/functors with @scalar_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, $(esc(:RTA))::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
+        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, $(esc(:RTA))::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where {$(esc(:RT))}
             genexprs = Expr[$(exprs...,)...]
             gensetup = Expr[]
 
             has_omega = needs_primal(config)
-            
+
             inp_types = ($(map(esc, ann_names)...),)
             tosum0 = $tosum0
 
@@ -439,7 +448,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 for w in 1:W
                     outexpr = Symbol("outres_$w")
                     outres[w] = outexpr
-                    if $(esc(:RT)) <: Tuple                    
+                    if $(esc(:RT)) <: Tuple
                         push!(gensetup, Expr(:(=), outexpr, Expr(:tuple, outsyms[:, w]...)))
                     else
                         @assert length(tosum0) == 1
@@ -461,7 +470,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                     continue
                 end
 
-                if !EnzymeRules.overwritten(config)[inum+1]
+                if !EnzymeRules.overwritten(config)[inum + 1]
                     push!(caches, nothing)
                     continue
                 end
@@ -541,7 +550,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = false
-            for expr in gensetup                
+            for expr in gensetup
                 if uses_symbol(expr, :Ω)
                     has_omega = true
                 end
@@ -577,7 +586,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 #if eltype(RTA) <: Complex
                 #    push!(genexprs, Expr(:(=), :dΩ, Expr(:call, Base.conj, :dΩ)))
                 #end
-            elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
+            elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed, EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
                 push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
             elseif !(RTA <: Type{<:EnzymeCore.Const})
                 push!(genexprs, Expr(:call, Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
@@ -613,7 +622,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                             continue
                         end
 
-                        pname = Symbol("partial_", string(o), "_", string(i), "_",  sname)
+                        pname = Symbol("partial_", string(o), "_", string(i), "_", sname)
                         if !visited[o, i]
 
                             # Descend through the rule to see if any users require the original result, Ω
@@ -632,7 +641,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 dval = Expr(:call, getfield, dval, w)
                             end
 
-                            if RT <: Tuple        
+                            if RT <: Tuple
                                 dval = Expr(:call, getfield, dval, o)
                             else
                                 @assert length(tosum0) == 1
@@ -660,13 +669,12 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 end
 
 
-
                 if !seen && inp_types[inum] <: Active
                     for w in 1:W
                         inexpr = Symbol("insym_", string(inum), "_", string(w))
                         insyms[inum, w] = inexpr
 
-                        push!(gensetup, Expr(:(=), inexpr, Expr(:call, EnzymeCore.make_zero, Expr(:call, getfield, Symbol(inp_names[inum]), 1) )))
+                        push!(gensetup, Expr(:(=), inexpr, Expr(:call, EnzymeCore.make_zero, Expr(:call, getfield, Symbol(inp_names[inum]), 1))))
                     end
                 end
 
@@ -767,7 +775,7 @@ EnzymeRules.@easy_rule(
 Then this rule can be tested by running `Enzyme.autodiff` and comparing with the result for the regular `cos` function:
 
 ```julia
-myderiv   = autodiff(Forward, mycos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
+myderiv = autodiff(Forward, mycos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
 truederiv = autodiff(Forward, cos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
 @assert myderiv = truederiv
 ```
@@ -785,7 +793,7 @@ macro easy_rule(call, maybe_setup, partials...)
     rrule_expr = scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names, partials)
 
     # Final return: building the expression to insert in the place of this macro
-    quote
+    return quote
         EnzymeRules.has_readonly_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
         EnzymeRules.has_attribute_preserving_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
         $(frule_expr)

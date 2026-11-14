@@ -94,7 +94,7 @@ nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
 
 """
-    tracked_pointer_offsets!(offs, dl, T, base=0)
+    tracked_pointer_offsets!(offs, dl, T, base = 0)
 
 Append to `offs` the byte offset, relative to `base`, of every GC-tracked pointer
 leaf of the LLVM type `T` in layout order.

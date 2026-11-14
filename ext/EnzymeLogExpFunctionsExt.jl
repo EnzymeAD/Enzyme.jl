@@ -5,6 +5,7 @@ using Enzyme
 
 function __init__()
     Enzyme.Compiler.known_ops[typeof(LogExpFunctions.xlogy)] = (:xlogy_jl, 2, nothing)
+    return
 end
 
 end

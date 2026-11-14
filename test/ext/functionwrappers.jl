@@ -33,7 +33,7 @@ end
 
 @testset "FunctionWrappers with partially known wrapper type" begin
     fws = Vector{FunctionWrapper{Float64}}(undef, 1)
-    fws[1] = FunctionWrapper{Float64,Tuple{Float64}}(cos)
+    fws[1] = FunctionWrapper{Float64, Tuple{Float64}}(cos)
     res = Enzyme.autodiff(
         Enzyme.set_runtime_activity(Enzyme.Reverse), partially_known_wrapper,
         Enzyme.Active, Enzyme.Active(0.5), Enzyme.Const(false), Enzyme.Const(fws)
