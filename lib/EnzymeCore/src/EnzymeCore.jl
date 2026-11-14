@@ -264,14 +264,14 @@ struct FFIABI <: ABI end
 """
     struct InlineABI <: ABI
 
-Inlining function call [`ABI`](@ref). 
+Inlining function call [`ABI`](@ref).
 """
 struct InlineABI <: ABI end
 
 """
     struct NonGenABI <: ABI
 
-Non-generated function [`ABI`](@ref). 
+Non-generated function [`ABI`](@ref).
 """
 struct NonGenABI <: ABI end
 
@@ -450,7 +450,7 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
 
 !!! warning
     The type parameters of `ReverseModeSplit` are not part of the public API and can change without notice.
-    Please use one of the following concrete instantiations instead: 
+    Please use one of the following concrete instantiations instead:
     - [`ReverseSplitNoPrimal`](@ref)
     - [`ReverseSplitWithPrimal`](@ref)
     You can modify them with the following helper functions:
@@ -480,14 +480,14 @@ const ReverseSplitWithPrimal = ReverseModeSplit{true, true, false, false, 0, tru
 """
     ReverseSplitModified(::ReverseModeSplit, ::Val{MB})
 
-Return a new instance of [`ReverseModeSplit`](@ref) mode where `ModifiedBetween` is set to `MB`. 
+Return a new instance of [`ReverseModeSplit`](@ref) mode where `ModifiedBetween` is set to `MB`.
 """
 @inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{MB}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
 """
     ReverseSplitWidth(::ReverseModeSplit, ::Val{W})
 
-Return a new instance of [`ReverseModeSplit`](@ref) mode where `Width` is set to `W`. 
+Return a new instance of [`ReverseModeSplit`](@ref) mode where `Width` is set to `W`.
 """
 @inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, WidthO, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{Width}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, WidthO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
@@ -589,7 +589,7 @@ function autodiff_deferred_thunk end
     make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
 
 Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
-what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
+what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value.
 """
 function make_zero end
 

@@ -246,7 +246,7 @@ const nofreefns = Set{String}((
 const inactivefns = Set{String}((
     "jl_f__compute_sparams",
     "ijl_f__compute_sparams",
-    
+
     # The binding lookup is asserted as inactive [e.g. globals are considered constant wrt differentiation]
     # If and when this changes, we need to change that here
     "jl_get_binding_value_seqcst",
@@ -365,7 +365,7 @@ const inactivefns = Set{String}((
 	"jl_setjmp",
 	"ijl_setjmp",
     "__sigsetjmp",
-    "sigsetjmp",		
+    "sigsetjmp",
     "jl_current_exception",
     "ijl_current_exception",
     "memhash_seed",
@@ -641,7 +641,7 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
                 else
-                    push!(function_attributes(fn), 
+                    push!(function_attributes(fn),
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
@@ -686,7 +686,7 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
                 else
-                    push!(function_attributes(fn), 
+                    push!(function_attributes(fn),
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
@@ -763,7 +763,7 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
                 else
-                    push!(function_attributes(fn), 
+                    push!(function_attributes(fn),
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
@@ -1032,7 +1032,7 @@ function annotate!(mod::LLVM.Module)
                                 (MRI_NoModRef << getLocationPos(Other)),
                             ).data,
                         )
-                    else 
+                    else
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
@@ -1180,7 +1180,7 @@ function annotate!(mod::LLVM.Module)
             end
         end
     end
-    
+
     for fname in ("jl_reshape_array", "ijl_reshape_array")
         if haskey(funcs, fname)
             for fn in funcs[fname]
@@ -1189,7 +1189,7 @@ function annotate!(mod::LLVM.Module)
             end
         end
     end
-    
+
     # Key of jl_eqtable_get/put is inactive, definitionally
     for fname in ("jl_eqtable_put", "ijl_eqtable_put")
         if haskey(funcs, fname)
@@ -1245,7 +1245,7 @@ end
 
 function mark_gpu_intrinsics!(target, mod::LLVM.Module)
     if target isa GPUCompiler.PTXCompilerTarget
-    
+
         arg1 = (
             "sin",
             "cos",
@@ -1288,7 +1288,7 @@ function mark_gpu_intrinsics!(target, mod::LLVM.Module)
             "fabs",
             "atan2",
         )
-        # isinf, finite "modf",       "fmod",    "remainder", 
+        # isinf, finite "modf",       "fmod",    "remainder",
         # "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",
         #   "hypot",  "rhypot",
         # "yn", "jn", "norm3d", "ilogb", powi

@@ -100,7 +100,7 @@ end
 	@test res[1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
 	res = Enzyme.autodiff(Forward, toactivepair, BatchDuplicated(2.7f0, (2.0f0, 5.0f0)), BatchDuplicated(3.1, (3.0, 7.0)))
 	@test res[1][1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
-	@test res[1][2] ≈ 2.7f0 * 7.0 + 5.0f0 * 3.1	
+	@test res[1][2] ≈ 2.7f0 * 7.0 + 5.0f0 * 3.1
 end
 
 struct InsFwdNormal1{T<:Real}
@@ -145,7 +145,7 @@ end
     y = [3.0]
     dy = [0.0]
     Enzyme.autodiff(set_runtime_activity(Reverse), tupq, Const(x), Duplicated(y, dy))
-    
+
     @test x ≈ [2.0]
     @test y ≈ [3.0]
     @test dy ≈ [2.0]
@@ -235,15 +235,15 @@ end
 @testset "Issue 3246 HVP with runtime activity" begin
     RA_R = Enzyme.set_runtime_activity(Enzyme.Reverse)
     RA_F = Enzyme.set_runtime_activity(Enzyme.Forward)
-    
+
     FLAG = Ref(true)
     runtime_iip() = FLAG[]
-    
+
     grad(x) = Enzyme.gradient(RA_R, p -> loss_3246(p, runtime_iip()), x)[1]
-    
+
     x0 = [1.0, 2.0, 3.0]
     v = [1.0, 0.0, 0.0]
-    
+
     res = Enzyme.autodiff(RA_F, Enzyme.Const(grad), Enzyme.Duplicated(x0, v))
     @test res[1] ≈ [2.0, 0.0, 0.0]
 end

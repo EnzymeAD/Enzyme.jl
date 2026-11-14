@@ -204,12 +204,12 @@ end
 
 Helper function for llvm-level rule generation. Will call the same function (and optional postprocessing),
 if the argument at index `cmpidx` isn't active. This takes into account runtime activity as a reason
-the value may not be active. 
+the value may not be active.
 
 If postprocess_const is set, the original function will always be called, but the postprocessing will be
 conditionally gated as follows.
 
-If the relevant input is active (and verified by runtime activity), 
+If the relevant input is active (and verified by runtime activity),
     postprocess(B, result, args) will run as normal
 Otherwise
     postprocess_const(B, result, args) will run
@@ -359,7 +359,7 @@ function batch_call_same_with_inverted_arg_if_active!(
         end
         if width == 1
             shadow = res
-        else            
+        else
             shadow = insert_value!(B, shadow, res, idx - 1)
             if idx == 1
                 norm = new_from_original(gutils, orig)

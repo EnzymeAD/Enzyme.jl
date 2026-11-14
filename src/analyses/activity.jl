@@ -426,7 +426,7 @@ const ActivityHookSigs = (
     Tuple{typeof(is_mutable_array), Type},
 )
 
-# given the current worldage of compilation, check if there are any methods 
+# given the current worldage of compilation, check if there are any methods
 # of the activity hooks which may invalidate the cache, and if so clear it.
 function check_activity_cache_invalidations(world::UInt)
     # We've already guaranteed that this world doesn't have any stale caches
@@ -481,7 +481,7 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
     slotnames = Core.svec(Symbol("#self#"), :T)
     code = Any[Core.Compiler.ReturnNode(result)]
     ci = create_fresh_codeinfo(active_reg_nothrow, source, world, slotnames, code)
-    
+
     ci.edges = Any[]
     for sig in ActivityHookSigs
         add_edge!(ci.edges, sig)
