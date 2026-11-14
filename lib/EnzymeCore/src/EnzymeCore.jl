@@ -78,7 +78,7 @@ Active(i::Integer) = Active(float(i))
 Active(ci::Complex{T}) where {T <: Integer} = Active(float(ci))
 
 """
-    Duplicated(x, ∂f_∂x, check=true)
+    Duplicated(x, ∂f_∂x, check = true)
 
 Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as duplicated, Enzyme will
 auto-differentiate in respect to such arguments, with `dx` acting as an
@@ -100,7 +100,7 @@ end
 Duplicated(x::T, y::T, check::Bool = true) where {T} = Duplicated{T}(x, y, check)
 
 """
-    DuplicatedNoNeed(x, ∂f_∂x, check=true)
+    DuplicatedNoNeed(x, ∂f_∂x, check = true)
 
 Like [`Duplicated`](@ref), except also specifies that Enzyme may avoid computing
 the original result and only compute the derivative values. This creates opportunities
@@ -109,7 +109,7 @@ for improved performance.
 ```julia
 function square_byref(out, v)
     out[] = v * v
-    nothing
+    return nothing
 end
 
 out = Ref(0.0)
@@ -146,7 +146,7 @@ end
 DuplicatedNoNeed(x::T, y::T, check::Bool = true) where {T} = DuplicatedNoNeed{T}(x, y, check)
 
 """
-    BatchDuplicated(x, ∂f_∂xs, check=true)
+    BatchDuplicated(x, ∂f_∂xs, check = true)
 
 Like [`Duplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
@@ -172,7 +172,7 @@ get_func(::BatchDuplicatedFunc{T, N, Func}) where {T, N, Func} = Func
 get_func(::Type{BatchDuplicatedFunc{T, N, Func}}) where {T, N, Func} = Func
 
 """
-    BatchDuplicatedNoNeed(x, ∂f_∂xs, check=true)
+    BatchDuplicatedNoNeed(x, ∂f_∂xs, check = true)
 
 Like [`DuplicatedNoNeed`](@ref), except contains several shadows to compute derivatives
 for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
@@ -200,7 +200,7 @@ BatchDuplicatedNoNeed(x::T, y::NTuple{N, T}, check::Bool = true) where {T, N} = 
 
 
 """
-    MixedDuplicated(x, ∂f_∂x, check=true)
+    MixedDuplicated(x, ∂f_∂x, check = true)
 
 Like [`Duplicated`](@ref), except x may contain both active [immutable] and duplicated [mutable]
 data which is differentiable. Only used within custom rules.
@@ -220,7 +220,7 @@ end
 MixedDuplicated(x::T, dx::Base.RefValue{T}, check::Bool = true) where {T} = MixedDuplicated{T}(x, dx, check)
 
 """
-    BatchMixedDuplicated(x, ∂f_∂xs, check=true)
+    BatchMixedDuplicated(x, ∂f_∂xs, check = true)
 
 Like [`MixedDuplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Only used within custom rules.
@@ -586,7 +586,7 @@ function autodiff_thunk end
 function autodiff_deferred_thunk end
 
 """
-    make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
+    make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive} = Val(false))::T
 
 Recursively make a zero'd copy of the value `prev` of type `T`. The argument `copy_if_inactive` specifies
 what to do if the type `T` is guaranteed to be inactive, use the primal (the default) or still copy the value. 
@@ -594,7 +594,7 @@ what to do if the type `T` is guaranteed to be inactive, use the primal (the def
 function make_zero end
 
 """
-    make_zero!(val::T, seen::IdSet{Any}=IdSet())::Nothing
+    make_zero!(val::T, seen::IdSet{Any} = IdSet())::Nothing
 
 Recursively set a variables differentiable fields to zero.
 
@@ -604,7 +604,7 @@ Recursively set a variables differentiable fields to zero.
 function make_zero! end
 
 """
-    remake_zero!(val::T, seen::IdSet{Any}=IdSet())::Nothing
+    remake_zero!(val::T, seen::IdSet{Any} = IdSet())::Nothing
 
 Recursively set a variables differentiable fields to zero.
 
@@ -693,7 +693,7 @@ function clear_err_if_func_written end
 """
     set_runtime_activity(::Mode)
     set_runtime_activity(::Mode, activity::Bool)
-    set_runtime_activity(::Mode, config::Union{FwdConfig,RevConfig})
+    set_runtime_activity(::Mode, config::Union{FwdConfig, RevConfig})
     set_runtime_activity(::Mode, prev::Mode)
 
 Return a new mode where runtime activity analysis is activated / set to the desired value. See the [FAQ](@ref faq-runtime-activity) for more information.
@@ -710,7 +710,7 @@ function clear_runtime_activity end
 """
     set_strong_zero(::Mode)
     set_strong_zero(::Mode, activity::Bool)
-    set_strong_zero(::Mode, config::Union{FwdConfig,RevConfig})
+    set_strong_zero(::Mode, config::Union{FwdConfig, RevConfig})
     set_strong_zero(::Mode, prev::Mode)
 
 Return a new mode where strong zero is activated / set to the desired value. See the [FAQ](@ref faq-strong-zero) for more information.

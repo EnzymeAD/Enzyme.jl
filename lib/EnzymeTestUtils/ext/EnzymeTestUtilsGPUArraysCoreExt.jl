@@ -7,7 +7,7 @@ using Enzyme
 function EnzymeTestUtils.acopyto!(dst, src::AbstractGPUArray)
     temp = Array{eltype(src)}(undef, size(src))
     Base.copyto!(temp, src)
-    EnzymeTestUtils.acopyto!(dst, temp)
+    return EnzymeTestUtils.acopyto!(dst, temp)
 end
 
 # basic containers: loop over defined elements, recursively converting them to vectors
@@ -55,11 +55,11 @@ function to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.ElementType}}, s
         end
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
-	x_new = Array{eltype(x)}(undef, sz)
+        x_new = Array{eltype(x)}(undef, sz)
         @inbounds @simd for i in 1:length(x)
             x_new[i] = eltype(x)(x_vec_new[i], x_vec_new[i + length(x)])
         end
-	x_new = Core.Typeof(x)(x_new)
+        x_new = Core.Typeof(x)(x_new)
         seen_xs[x] = x_new
         return x_new
     end
@@ -98,7 +98,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
         end
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
-	x_new = Array{eltype(x_vew_new)}(undef, size(x))
+        x_new = Array{eltype(x_vew_new)}(undef, size(x))
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue
@@ -106,7 +106,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
             x_new[i] = xi
             k += 1
         end
-	x_new = Core.Typeof(x)(x_new)
+        x_new = Core.Typeof(x)(x_new)
         seen_xs[x] = x_new
         return x_new
     end

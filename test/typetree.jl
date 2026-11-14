@@ -207,7 +207,7 @@ struct UninhabitedBroadcastSentinel <: Real end
 function dead_bottom_array_branch!(out::Vector{Float32}, y::Matrix{Float32}, case::Int)
     tmp = UninhabitedBroadcastSentinel()
     arr = if case == 1
-        2f0 .* y
+        2.0f0 .* y
     elseif case == 2
         y .* tmp
     else

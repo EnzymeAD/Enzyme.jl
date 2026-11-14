@@ -7,13 +7,13 @@ Base.unsafe_convert(::Type{API.EnzymeGradientUtilsRef}, gutils::GradientUtils) =
 LLVM.dispose(gutils::GradientUtils) = throw("Cannot free gutils")
 
 function call_samefunc_with_inverted_bundles!(
-    B::LLVM.IRBuilder,
-    gutils::GradientUtils,
-    orig::LLVM.CallInst,
-    args::Vector{<:LLVM.Value},
-    valTys::Vector{API.CValueType},
-    lookup::Bool,
-)
+        B::LLVM.IRBuilder,
+        gutils::GradientUtils,
+        orig::LLVM.CallInst,
+        args::Vector{<:LLVM.Value},
+        valTys::Vector{API.CValueType},
+        lookup::Bool,
+    )
     @assert length(args) == length(valTys)
     return LLVM.Value(
         API.EnzymeGradientUtilsCallWithInvertedBundles(
@@ -58,11 +58,11 @@ function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)
         return uncacheable
     end
     if API.EnzymeGradientUtilsGetUncacheableArgs(
-        gutils,
-        orig,
-        uncacheable,
-        length(uncacheable),
-    ) != 1
+            gutils,
+            orig,
+            uncacheable,
+            length(uncacheable),
+        ) != 1
         fill!(uncacheable, 1)
     end
     return uncacheable
@@ -90,12 +90,12 @@ invert_pointer(gutils::GradientUtils, val::LLVM.Value, B::LLVM.IRBuilder) =
     LLVM.Value(API.EnzymeGradientUtilsInvertPointer(gutils, val, B))
 
 function debug_from_orig!(
-    gutils::GradientUtils,
-    nval::LLVM.Instruction,
-    oval::LLVM.Instruction,
-)
+        gutils::GradientUtils,
+        nval::LLVM.Instruction,
+        oval::LLVM.Instruction,
+    )
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, nval, oval)
-    nothing
+    return nothing
 end
 
 function add_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock, name::String, forkCache::Bool = true, push::Bool = true)
@@ -106,7 +106,7 @@ function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return API.EnzymeGradientUtilsSetReverseBlock(gutils, block)
 end
 
-function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vector{LLVM.LLVMType}, name_key::String; force_run=false, need_result=true, preprocess=nothing, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
+function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vector{LLVM.LLVMType}, name_key::String; force_run = false, need_result = true, preprocess = nothing, postprocess = nothing, postprocess_const = nothing, cmpidx::Int = 1)
     FT0 = LLVM.function_type(fn)
     ptys = copy(forward_tys)
     insert!(ptys, 1, ptys[cmpidx])
@@ -116,7 +116,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
     if extra_rt
         insert!(ptys, 1, LLVM.return_type(FT0))
     end
-    FT = LLVM.FunctionType(need_result ? LLVM.return_type(FT0) : LLVM.VoidType(), ptys; vararg=LLVM.isvararg(FT0))
+    FT = LLVM.FunctionType(need_result ? LLVM.return_type(FT0) : LLVM.VoidType(), ptys; vararg = LLVM.isvararg(FT0))
     mod = LLVM.parent(fn)
     newname = "julia.enzyme.conditionally_execute."
     if !need_result
@@ -148,7 +148,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
             position!(builder, entry)
             parms = collect(parameters(cfn))
 
-            rparms = parms[(2+extra_rt):end]
+            rparms = parms[(2 + extra_rt):end]
 
             ppr = nothing
 
@@ -215,21 +215,21 @@ Otherwise
     postprocess_const(B, result, args) will run
 """
 function call_same_with_inverted_arg_if_active!(
-    B::LLVM.IRBuilder,
-    gutils::GradientUtils,
-    orig::LLVM.CallInst,
-    args::Vector{<:LLVM.Value},
-    valTys::Vector{API.CValueType},
-    lookup::Bool,
-    name_key::String;
-    preprocess=nothing,
-    postprocess=nothing,
-    postprocess_const = nothing,
-    force_run = postprocess_const !== nothing,
-    cmpidx::Int = 1,
-    movebefore = true,
-    need_result = true
-)::Union{LLVM.Value, Nothing}
+        B::LLVM.IRBuilder,
+        gutils::GradientUtils,
+        orig::LLVM.CallInst,
+        args::Vector{<:LLVM.Value},
+        valTys::Vector{API.CValueType},
+        lookup::Bool,
+        name_key::String;
+        preprocess = nothing,
+        postprocess = nothing,
+        postprocess_const = nothing,
+        force_run = postprocess_const !== nothing,
+        cmpidx::Int = 1,
+        movebefore = true,
+        need_result = true
+    )::Union{LLVM.Value, Nothing}
     @assert length(args) == length(valTys)
     origops = arg_operands_view(orig)
     if !force_run && is_constant_value(gutils, origops[cmpidx])
@@ -323,20 +323,20 @@ Helper function for llvm-level rule generation. Will call call_same_with_inverte
 corresponding extracted batches if width > 1, otherwise it will call it once.
 """
 function batch_call_same_with_inverted_arg_if_active!(
-    B::LLVM.IRBuilder,
-    gutils::GradientUtils,
-    orig::LLVM.CallInst,
-    args::Vector{<:LLVM.Value},
-    valTys::Vector{API.CValueType},
-    lookup::Bool,
-    name_key::String;
-    need_result = true,
-    kwargs...
-)
+        B::LLVM.IRBuilder,
+        gutils::GradientUtils,
+        orig::LLVM.CallInst,
+        args::Vector{<:LLVM.Value},
+        valTys::Vector{API.CValueType},
+        lookup::Bool,
+        name_key::String;
+        need_result = true,
+        kwargs...
+    )
 
     width = get_width(gutils)
 
-    void_rt = value_type(orig) ==LLVM.VoidType()
+    void_rt = value_type(orig) == LLVM.VoidType()
     shadow = if !void_rt && need_result
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         LLVM.UndefValue(ST)::LLVM.Value
@@ -353,13 +353,13 @@ function batch_call_same_with_inverted_arg_if_active!(
                 end
             end
         end
-        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup, name_key; need_result, kwargs..., movebefore=idx == 1)
+        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup, name_key; need_result, kwargs..., movebefore = idx == 1)
         if shadow === nothing
             continue
         end
         if width == 1
             shadow = res
-        else            
+        else
             shadow = insert_value!(B, shadow, res, idx - 1)
             if idx == 1
                 norm = new_from_original(gutils, orig)

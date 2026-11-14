@@ -6,53 +6,53 @@
 end
 
 @inline function Base.:|(a1::ActivityState, a2::ActivityState)
-    ActivityState(Int(a1) | Int(a2))
+    return ActivityState(Int(a1) | Int(a2))
 end
 
 @inline element(::Val{T}) where {T} = T
 
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.SimpleVector}) = Any
-@inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
-@inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
+@inline ptreltype(::Type{Core.LLVMPtr{T, N}}) where {T, N} = T
+@inline ptreltype(::Type{Core.LLVMPtr{T} where {N}}) where {T} = T
 @inline ptreltype(::Type{Base.RefValue{T}}) where {T} = T
 @inline ptreltype(::Type{Complex{T}}) where {T} = T
 @inline ptreltype(::Type{Tuple{Vararg{T}}}) where {T} = T
-@inline ptreltype(::Type{IdDict{K,V}}) where {K,V} = V
-@inline ptreltype(::Type{IdDict{K,V} where K}) where {V} = V
+@inline ptreltype(::Type{IdDict{K, V}}) where {K, V} = V
+@inline ptreltype(::Type{IdDict{K, V} where {K}}) where {V} = V
 @static if Base.USE_GPL_LIBS
-@inline ptreltype(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = T
+    @inline ptreltype(::Type{SparseArrays.CHOLMOD.Dense{T}}) where {T} = T
 end
 @static if VERSION < v"1.11-"
 else
-@inline ptreltype(::Type{Memory{T}}) where T = T
+    @inline ptreltype(::Type{Memory{T}}) where {T} = T
 end
 
 @inline is_arrayorvararg_ty(::Type) = false
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 @inline is_arrayorvararg_ty(::Type{Core.SimpleVector}) = true
 @inline is_arrayorvararg_ty(::Type{Ptr{T}}) where {T} = true
-@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
-@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T, N}}) where {T, N} = true
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T, N} where {N}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where {T} = true
-@inline is_arrayorvararg_ty(::Type{IdDict{K,V}}) where {K,V} = true
-@inline is_arrayorvararg_ty(::Type{IdDict{K,V} where K}) where {V} = true
+@inline is_arrayorvararg_ty(::Type{IdDict{K, V}}) where {K, V} = true
+@inline is_arrayorvararg_ty(::Type{IdDict{K, V} where {K}}) where {V} = true
 @static if Base.USE_GPL_LIBS
-@inline is_arrayorvararg_ty(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = true
+    @inline is_arrayorvararg_ty(::Type{SparseArrays.CHOLMOD.Dense{T}}) where {T} = true
 end
 @static if VERSION < v"1.11-"
 else
-@inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
+    @inline is_arrayorvararg_ty(::Type{Memory{T}}) where {T} = true
 end
 
 Base.@nospecializeinfer function active_reg_recur(
-    @nospecialize(ST::Type),
-    seen::Base.IdSet{Type},
-    world::UInt,
-    justActive::Bool,
-    UnionSret::Bool,
-    AbstractIsMixed::Bool,
-)::ActivityState
+        @nospecialize(ST::Type),
+        seen::Base.IdSet{Type},
+        world::UInt,
+        justActive::Bool,
+        UnionSret::Bool,
+        AbstractIsMixed::Bool,
+    )::ActivityState
     if ST isa Union
         return (
             active_reg_recur(
@@ -63,8 +63,8 @@ Base.@nospecializeinfer function active_reg_recur(
                 UnionSret,
                 AbstractIsMixed,
             )
-            |
-            active_reg_recur(
+                |
+                active_reg_recur(
                 ST.b,
                 seen,
                 world,
@@ -139,13 +139,13 @@ Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::
 end
 
 Base.@nospecializeinfer @inline function active_reg_inner(
-    @nospecialize(T::Type),
-    seen::Base.IdSet{Type},
-    world::UInt,
-    justActive::Bool,
-    UnionSret::Bool,
-    AbstractIsMixed::Bool,
-)::ActivityState
+        @nospecialize(T::Type),
+        seen::Base.IdSet{Type},
+        world::UInt,
+        justActive::Bool,
+        UnionSret::Bool,
+        AbstractIsMixed::Bool,
+    )::ActivityState
     if T === Any
         if AbstractIsMixed
             return MixedState
@@ -178,13 +178,13 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         end
 
         if active_reg_inner(
-            unwrapped_number_type(T),
-            seen,
-            world,
-            justActive,
-            UnionSret,
-            AbstractIsMixed,
-        ) == AnyState
+                unwrapped_number_type(T),
+                seen,
+                world,
+                justActive,
+                UnionSret,
+                AbstractIsMixed,
+            ) == AnyState
             return AnyState
         else
             if AbstractIsMixed
@@ -210,13 +210,13 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         end
 
         if active_reg_inner(
-            eltype(T),
-            seen,
-            world,
-            justActive,
-            UnionSret,
-            AbstractIsMixed,
-        ) == AnyState
+                eltype(T),
+                seen,
+                world,
+                justActive,
+                UnionSret,
+                AbstractIsMixed,
+            ) == AnyState
             return AnyState
         else
             if AbstractIsMixed
@@ -228,21 +228,21 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     end
 
     if T <: Ptr ||
-       T <: Core.LLVMPtr ||
-       T <: Base.RefValue || is_arrayorvararg_ty(T)
+            T <: Core.LLVMPtr ||
+            T <: Base.RefValue || is_arrayorvararg_ty(T)
         if justActive && !AbstractIsMixed
             return AnyState
         end
 
         if is_arrayorvararg_ty(T) &&
-           active_reg_inner(
-            ptreltype(T),
-            seen,
-            world,
-            justActive,
-            UnionSret,
-            AbstractIsMixed,
-        ) == AnyState
+                active_reg_inner(
+                ptreltype(T),
+                seen,
+                world,
+                justActive,
+                UnionSret,
+                AbstractIsMixed,
+            ) == AnyState
             return AnyState
         else
             if AbstractIsMixed && is_vararg_tup(T)
@@ -304,7 +304,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                 return AnyState
             end
             if active_reg_inner(T.a, seen, world, justActive, UnionSret, false) !=
-               AnyState
+                    AnyState
                 if AbstractIsMixed
                     return MixedState
                 else
@@ -312,7 +312,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                 end
             end
             if active_reg_inner(T.b, seen, world, justActive, UnionSret, false) !=
-               AnyState
+                    AnyState
                 if AbstractIsMixed
                     return MixedState
                 else
@@ -346,19 +346,21 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     end
 
     nT = if T <: Tuple && !(T isa UnionAll)
-        Tuple{(
-            ntuple(length(T.parameters)) do i
-                Base.@_inline_meta
-                sT = T.parameters[i]
-                if sT isa TypeVar
-                    Any
-                elseif sT isa Core.TypeofVararg
-                    Any
-                else
-                    sT
+        Tuple{
+            (
+                ntuple(length(T.parameters)) do i
+                    Base.@_inline_meta
+                    sT = T.parameters[i]
+                    if sT isa TypeVar
+                        Any
+                    elseif sT isa Core.TypeofVararg
+                        Any
+                    else
+                        sT
+                    end
                 end
-            end
-        )...}
+            )...
+        }
     else
         T
     end
@@ -426,7 +428,7 @@ const ActivityHookSigs = (
     Tuple{typeof(is_mutable_array), Type},
 )
 
-# given the current worldage of compilation, check if there are any methods 
+# given the current worldage of compilation, check if there are any methods
 # of the activity hooks which may invalidate the cache, and if so clear it.
 function check_activity_cache_invalidations(world::UInt)
     # We've already guaranteed that this world doesn't have any stale caches
@@ -456,11 +458,11 @@ function check_activity_cache_invalidations(world::UInt)
         push!(ActivityMethodCache, match)
     end
 
-    ActivityWorldCache[] = world
+    return ActivityWorldCache[] = world
 
 end
 
-Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
+Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive = false, UnionSret = false, AbstractIsMixed = false)
     key = (ST, justActive, UnionSret, AbstractIsMixed)
     if haskey(ActivityCache, key)
         return ActivityCache[key]
@@ -481,7 +483,7 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
     slotnames = Core.svec(Symbol("#self#"), :T)
     code = Any[Core.Compiler.ReturnNode(result)]
     ci = create_fresh_codeinfo(active_reg_nothrow, source, world, slotnames, code)
-    
+
     ci.edges = Any[]
     for sig in ActivityHookSigs
         add_edge!(ci.edges, sig)
@@ -516,8 +518,8 @@ end
 
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
-@inline function guaranteed_nonactive(@nospecialize(T::Type), world::UInt; AbstractIsMixed=false)::Bool
-    rt = active_reg(T, world; justActive=true, AbstractIsMixed)
+@inline function guaranteed_nonactive(@nospecialize(T::Type), world::UInt; AbstractIsMixed = false)::Bool
+    rt = active_reg(T, world; justActive = true, AbstractIsMixed)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 

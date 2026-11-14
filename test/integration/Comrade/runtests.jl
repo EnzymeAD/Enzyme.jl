@@ -17,7 +17,6 @@ const arrayf = joinpath(ComradePATH, "array.txt")
 const dataf = Base.download(dataurl)
 
 
-
 function FiniteDifferences.to_vec(k::IntensityMap)
     v, b = to_vec(DD.data(k))
     back(x) = DD.rebuild(k, b(x))
@@ -273,11 +272,11 @@ end
 
     @testset "multidomain" begin
         fov = 1.0
-        x = range(-fov/2, fov; length=8)
-        y = range(-fov, fov; length=8)
+        x = range(-fov / 2, fov; length = 8)
+        y = range(-fov, fov; length = 8)
         Ti = [1.0, 2.0]
-        Fr = [86e9, 230e9]
-        g = RectiGrid((;X=x, Y=y, Ti, Fr))
+        Fr = [86.0e9, 230.0e9]
+        g = RectiGrid((; X = x, Y = y, Ti, Fr))
         function foo4D(x, p)
             cimg = ContinuousImage(IntensityMap(x, VLBISkyModels.imgdomain(p)), DeltaPulse())
             vis = VLBISkyModels.visibilitymap(cimg, p)
@@ -285,8 +284,8 @@ end
         end
 
         x = rand(size(g)...)
-        U = (rand(20) .- 0.5)*0.25 # keep well within bounded in [1/2, 1/2)
-        V = (rand(20) .- 0.5)*0.25 # keep well within bounded in [1/2, 1/2)
+        U = (rand(20) .- 0.5) * 0.25 # keep well within bounded in [1/2, 1/2)
+        V = (rand(20) .- 0.5) * 0.25 # keep well within bounded in [1/2, 1/2)
         uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
         uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
         guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))
@@ -359,18 +358,18 @@ end
                 δs = ntuple(Val(4)) do i
                     σs[i] * as[i].params
                 end
-            
+
                 pmap = VLBISkyModels.PolExp2Map!(δs..., grid)
 
                 mmodel = modify(RingTemplate(RadialDblPower(ain, aout), AzimuthalUniform()), Stretch(r))
                 mimg = intensitymap(mmodel, grid)
-            
+
                 ft = zero(eltype(mimg))
                 for i in eachindex(pmap, mimg)
                     pmap[i] *= mimg[i]
                     ft += pmap[i].I
                 end
-            
+
                 pmap .= ftot .* pmap ./ ft
                 x0, y0 = centroid(pmap)
                 m = ContinuousImage(pmap, BSplinePulse{3}())
@@ -381,7 +380,7 @@ end
             fovy = μas2rad(60.0)
             nx = ny = 8
             grid = imagepixels(fovx, fovy, nx, ny)
-            skymeta = (; grid, ftot = 0.6);
+            skymeta = (; grid, ftot = 0.6)
 
             cprior = corr_image_prior(grid, dcoh; order = 2)
             skyprior = (
@@ -390,7 +389,7 @@ end
                 ain = Uniform(0.0, 5.0),
                 aout = Uniform(0.0, 5.0),
                 r = Uniform(μas2rad(1.0), μas2rad(30.0)),
-            )   
+            )
             skym = SkyModel(polarizedsky, skyprior, grid; metadata = skymeta)
 
             function fgain(x)
@@ -423,7 +422,7 @@ end
             )
             intmodel = InstrumentModel(J, intprior)
             # Only do this for a small chunk to keep test time reasonable
-            post = VLBIPosterior(skym, intmodel, filter(x-> 1.0 < x.baseline.Ti < 3.0, dcoh))
+            post = VLBIPosterior(skym, intmodel, filter(x -> 1.0 < x.baseline.Ti < 3.0, dcoh))
             tpost = asflat(post)
 
             x = prior_sample(tpost)

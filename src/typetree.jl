@@ -37,18 +37,18 @@ end
 # end
 
 function only!(tt::TypeTree, offset::Integer)
-    API.EnzymeTypeTreeOnlyEq(tt, offset)
+    return API.EnzymeTypeTreeOnlyEq(tt, offset)
 end
 
 function data0!(tt::TypeTree)
-    API.EnzymeTypeTreeData0Eq(tt)
+    return API.EnzymeTypeTreeData0Eq(tt)
 end
 
 function canonicalize!(tt::TypeTree, size, dl)
-    API.EnzymeTypeTreeCanonicalizeInPlace(tt, size, dl)
+    return API.EnzymeTypeTreeCanonicalizeInPlace(tt, size, dl)
 end
 function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
-    API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
+    return API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
 
 function merge!(dst::TypeTree, src::TypeTree; consume = true)
@@ -62,10 +62,10 @@ end
 @inline function typetree_primitive(t)
     return nothing
 end
-@inline function typetree_primitive(::Type{T}) where {T<:Integer}
+@inline function typetree_primitive(::Type{T}) where {T <: Integer}
     return API.DT_Integer
 end
-@inline function typetree_primitive(::Type{T}) where {T<:Enum}
+@inline function typetree_primitive(::Type{T}) where {T <: Enum}
     return API.DT_Integer
 end
 @inline function typetree_primitive(::Type{Char})
@@ -128,8 +128,8 @@ function get_offsets(@nospecialize(T::Type))
         return ()
     end
 
-    results = Tuple{API.CConcreteType,Int}[]
-    for f = 1:fieldcount(T)
+    results = Tuple{API.CConcreteType, Int}[]
+    for f in 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = typed_fieldtype(T, f)
 
@@ -285,7 +285,7 @@ function to_md(tt::TypeTree, ctx)
     )
 end
 
-const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
+const TypeTreeTable = IdDict{Any, Union{Nothing, TypeTree}}
 
 """
     function typetree(T, ctx, dl, seen=TypeTreeTable())
@@ -311,7 +311,7 @@ function typetree(@nospecialize(T::Type), ctx, dl, seen = TypeTreeTable())
 end
 
 """
-    typetree_in_world(world, T, ctx, dl, seen=TypeTreeTable())
+    typetree_in_world(world, T, ctx, dl, seen = TypeTreeTable())
 
 Call [`typetree`](@ref) in `world`, usually the world of the compilation.
 
@@ -354,18 +354,18 @@ end
 
 function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
-    for i = 0:(sizeof(Csize_t)-1)
+    for i in 0:(sizeof(Csize_t) - 1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
 end
 
 function typetree_inner(
-    ::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}},
-    ctx,
-    dl,
-    seen::TypeTreeTable,
-) where {T}
+        ::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}},
+        ctx,
+        dl,
+        seen::TypeTreeTable,
+    ) where {T}
     tt = copy(typetree(T == UInt8 ? Nothing : T, ctx, dl, seen))
     @static if Base.USE_GPL_LIBS
         cholmod_exception = T != SparseArrays.cholmod_dense_struct && T != SparseArrays.cholmod_sparse_struct && T != SparseArrays.cholmod_factor_struct
@@ -400,28 +400,28 @@ end
             sizeofstruct += sizeof(Csize_t)
         end
 
-        for i = offset:(sizeofstruct-1)
+        for i in offset:(sizeofstruct - 1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
         return tt
     end
 else
     function typetree_inner(
-        ::Type{<:GenericMemory{kind,T}},
-        ctx,
-        dl,
-        seen::TypeTreeTable,
-    ) where {kind,T}
+            ::Type{<:GenericMemory{kind, T}},
+            ctx,
+            dl,
+            seen::TypeTreeTable,
+        ) where {kind, T}
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
 
         if !allocatedinline(T) && T != Union{}
             st0 = TypeTree(API.DT_Pointer, -1, ctx)
             only!(st0, -1)
             merge!(tt, st0)
-        end 
+        end
 
         shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
-        for i = 0:(sizeof(Csize_t)-1)
+        for i in 0:(sizeof(Csize_t) - 1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
 
@@ -429,18 +429,18 @@ else
     end
 
     function typetree_inner(
-        AT::Type{<:GenericMemoryRef{kind,T}},
-        ctx,
-        dl,
-        seen::TypeTreeTable,
-    ) where {kind,T}
+            AT::Type{<:GenericMemoryRef{kind, T}},
+            ctx,
+            dl,
+            seen::TypeTreeTable,
+        ) where {kind, T}
         tt = copy(typetree(typed_fieldtype(AT, 1), ctx, dl, seen))
         shift!(tt, dl, 0, sizeof(Int), 0)
 
-        for f = 2:fieldcount(AT)
+        for f in 2:fieldcount(AT)
             offset = fieldoffset(AT, f)
             subT = typed_fieldtype(AT, f)
-            
+
             subtree = copy(typetree(subT, ctx, dl, seen))
 
             # Allocated inline so adjust first path
@@ -505,7 +505,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
 
     desc = Base.DataTypeFieldDesc(T)
 
-    for f = 1:fieldcount(T)
+    for f in 1:fieldcount(T)
         offset = Int(fieldoffset(T, f))
         subT = typed_fieldtype(T, f)
 
@@ -513,12 +513,12 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         nextbytes = if f == fieldcount(T)
             Int(sizeof(T))
         else
-            Int(fieldoffset(T, f+1))
+            Int(fieldoffset(T, f + 1))
         end
 
         # Fill in padding gaps with Anything, unless subT was an integer or Enum
         padding_T = (subT <: Integer || subT <: Enum) ? API.DT_Integer : API.DT_Anything
-        for i = endbytes:(nextbytes-1)
+        for i in endbytes:(nextbytes - 1)
             merge!(tt, TypeTree(padding_T, i, ctx))
         end
 
@@ -543,7 +543,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
             # FIXME: Handle union
             continue
         end
-        
+
         subtree = copy(typetree(subT, ctx, dl, seen))
 
         # Allocated inline so adjust first path

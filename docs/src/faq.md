@@ -19,23 +19,23 @@ Given a function `mymul!` that performs the equivalent of `R = A * B` for matric
 using Enzyme, Random
 
 function mymul!(R, A, B)
-    @assert axes(A,2) == axes(B,1)
+    @assert axes(A, 2) == axes(B, 1)
     @inbounds @simd for i in eachindex(R)
         R[i] = 0
     end
     @inbounds for j in axes(B, 2), i in axes(A, 1)
-        @inbounds @simd for k in axes(A,2)
-            R[i,j] += A[i,k] * B[k,j]
+        @inbounds @simd for k in axes(A, 2)
+            R[i, j] += A[i, k] * B[k, j]
         end
     end
-    nothing
+    return nothing
 end
 
 Random.seed!(1234)
 A = rand(5, 3)
 B = rand(3, 7)
 
-R = zeros(size(A,1), size(B,2))
+R = zeros(size(A, 1), size(B, 2))
 ∂z_∂R = rand(size(R)...)  # Some gradient/tangent passed to us
 ∂z_∂R0 = copyto!(similar(∂z_∂R), ∂z_∂R)  # exact copy for comparison
 
@@ -49,8 +49,8 @@ Now we have:
 
 ```@example pullback
 R ≈ A * B            &&
-∂z_∂A ≈ ∂z_∂R0 * B'  &&  # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[1]
-∂z_∂B ≈ A' * ∂z_∂R0      # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[2]
+    ∂z_∂A ≈ ∂z_∂R0 * B'  &&  # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[1]
+    ∂z_∂B ≈ A' * ∂z_∂R0      # equivalent to Zygote.pullback(*, A, B)[2](∂z_∂R)[2]
 ```
 
 Note that the result of the backpropagation is *added to* `∂z_∂A` and `∂z_∂B`, they act as accumulators for gradient information.
@@ -83,10 +83,10 @@ Consider the following function that loads from offset 47 of a Ptr
 ```jldoctest dup
 function f(ptr)
     x = unsafe_load(ptr, 47)
-    x * x
+    return x * x
 end
 
-ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100 * sizeof(Float64)))
 unsafe_store!(ptr, 3.14, 47)
 
 f(ptr)
@@ -98,9 +98,9 @@ f(ptr)
 The recommended (and guaranteed sound) way to differentiate this is to pass in a shadow pointer that is congruent with the primal. That is to say, its length (and recursively for any sub types) are equivalent to the primal.
 
 ```jldoctest dup
-ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100 * sizeof(Float64)))
 unsafe_store!(ptr, 3.14, 47)
-dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(100*sizeof(Float64), 1))
+dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(100 * sizeof(Float64), 1))
 
 autodiff(Reverse, f, Duplicated(ptr, dptr))
 
@@ -113,7 +113,7 @@ unsafe_load(dptr, 47)
 However, since we know the original function only reads from one float64, we could choose to only allocate a single float64 for the shadow, as long as we ensure that loading from offset 47 (the only location accessed) is in bounds.
 
 ```jldoctest dup
-ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100*sizeof(Float64)))
+ptr = Base.reinterpret(Ptr{Float64}, Libc.malloc(100 * sizeof(Float64)))
 unsafe_store!(ptr, 3.14, 47)
 dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
 
@@ -121,7 +121,7 @@ dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
 # since julia one indexes we subtract 46 * sizeof(Float64) here
 autodiff(Reverse, f, Duplicated(ptr, dptr - 46 * sizeof(Float64)))
 
-# represents the derivative of the 47'th elem of ptr, 
+# represents the derivative of the 47'th elem of ptr,
 unsafe_load(dptr)
 
 # output
@@ -299,8 +299,10 @@ x, dx = [1.0], [2.0];
 y = [3.0];
 condition = false;  # return the constant variable
 try  #hide
-Enzyme.autodiff(Forward, g, Const(condition), Duplicated(x, dx), Const(y))
-catch err; showerror(stderr, err); end  #hide
+    Enzyme.autodiff(Forward, g, Const(condition), Duplicated(x, dx), Const(y))
+catch err #hide
+    showerror(stderr, err) #hide
+end  #hide
 ```
 
 The returned value here could either by constant or duplicated, depending on the runtime-defined value of `cond`. If `cond` is true, Enzyme simply returns the shadow of `active_var` as the derivative. However, if `cond` is false, there is no derivative shadow for `constant_var` and Enzyme will throw a `EnzymeRuntimeActivityError` error. For some simple types, e.g. a float Enzyme can circumvent this issue, for example by returning the float 0. Similarly, for some types like the Symbol type, which are never differentiable, such a shadow value will never be used, and Enzyme can return the original "primal" value as its derivative.  However, for arbitrary data structures, Enzyme presently has no generic mechanism to resolve this.
@@ -309,12 +311,14 @@ For example consider a third function:
 
 ```@example runtime
 function h(cond, active_var, constant_var)
-  return [g(cond, active_var, constant_var), g(cond, active_var, constant_var)]
+    return [g(cond, active_var, constant_var), g(cond, active_var, constant_var)]
 end
 
 try  #hide
-Enzyme.autodiff(Forward, h, Const(condition), Duplicated(x, dx), Const(y))
-catch err; showerror(stderr, err); end  #hide
+    Enzyme.autodiff(Forward, h, Const(condition), Duplicated(x, dx), Const(y))
+catch err #hide
+    showerror(stderr, err) #hide
+end  #hide
 ```
 
 Enzyme provides a nice utility `Enzyme.make_zero` which takes a data structure and constructs a deepcopy of the data structure with all of the floats set to zero and non-differentiable types like Symbols set to their primal value. If Enzyme gets into such a "Mismatched activity" situation where it needs to return a differentiable data structure from a constant variable, it could try to resolve this situation by constructing a new shadow data structure, such as with `Enzyme.make_zero`. However, this still can lead to incorrect results. In the case of `h` above, suppose that `active_var` and `constant_var` are both arrays, which are mutable (aka in-place) data types. This means that the return of `h` is going to either be `result = [active_var, active_var]` or `result = [constant_var, constant_var]`.  Thus an update to `result[1][1]` would also change `result[2][1]` since `result[1]` and `result[2]` are the same array. 
@@ -337,7 +341,7 @@ dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, C
     If using runtime activity, care **must** be taken to check derivative aliasing afterwards:
 
     ```@example runtime
-    dout === out  # if true and pointer-like, the actual derivative is zero 
+    dout === out  # if true and pointer-like, the actual derivative is zero
     ```
 
 ## Mixed activity
@@ -353,14 +357,14 @@ Internally, by virtue of working at the LLVM level, most Julia types are represe
 For example, consider the following code, which has a type unstable call to `myfirst`, passing in a mixed type `Tuple{Float64, Vector{Float64}}`.
 
 ```julia
-@noinline function myfirst(tup::T) where T
+@noinline function myfirst(tup::T) where {T}
     return tup[1]
 end
 
 function f(x::Float64)
     vec = [x]
     tup = (x, vec)
-    Base.inferencebarrier(myfirst)(tup)::Float64
+    return Base.inferencebarrier(myfirst)(tup)::Float64
 end
 
 Enzyme.autodiff(Reverse, f, Active, Active(3.1))
@@ -370,7 +374,7 @@ When this situation arises, it is often easiest to resolve it by adding a level 
 
 
 ```julia
-@noinline function myfirst_ref(tup_ref::T) where T
+@noinline function myfirst_ref(tup_ref::T) where {T}
     tup = tup_ref[]
     return tup[1]
 end
@@ -379,7 +383,7 @@ function f2(x::Float64)
     vec = [x]
     tup = (x, vec)
     tup_ref = Ref(tup)
-    Base.inferencebarrier(myfirst_ref)(tup_ref)::Float64
+    return Base.inferencebarrier(myfirst_ref)(tup_ref)::Float64
 end
 
 Enzyme.autodiff(Reverse, f2, Active, Active(3.1))
@@ -433,7 +437,7 @@ function grad_f(x)
     dz = 0.0
 
     # derivative of 1.0 / x
-    dx += dy * - 1.0 / x^2 
+    dx += dy * - 1.0 / x^2
     dy = 0.0
 
     return dx
@@ -480,8 +484,8 @@ f(z) = z * z
 # a fixed input to use for testing
 z = 3.1 + 2.7im
 
-grad_u = Enzyme.autodiff(Reverse, z->real(f(z)), Active, Active(z))[1][1]
-grad_v = Enzyme.autodiff(Reverse, z->imag(f(z)), Active, Active(z))[1][1]
+grad_u = Enzyme.autodiff(Reverse, z -> real(f(z)), Active, Active(z))[1][1]
+grad_v = Enzyme.autodiff(Reverse, z -> imag(f(z)), Active, Active(z))[1][1]
 
 (grad_u, grad_v)
 # output
@@ -524,8 +528,8 @@ d/dy f(x, y) = d/dy [u(x,y), v(x,y)] = d/dy [x*x-y*y, 2*x*y] = [-2*y, 2*x];
 ```
 
 ```jldoctest complex
-d_dx = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
-d_dy = Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
+d_dx = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0 + 0.0im))[1]
+d_dy = Enzyme.autodiff(Forward, f, Duplicated(z, 0.0 + 1.0im))[1]
 
 (d_dx, d_dy)
 
@@ -535,7 +539,7 @@ d_dy = Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
 
 Again, we can go ahead and batch this.
 ```jldoctest complex
-Enzyme.autodiff(Forward, f, BatchDuplicated(z, (1.0+0.0im, 0.0+1.0im)))[1]
+Enzyme.autodiff(Forward, f, BatchDuplicated(z, (1.0 + 0.0im, 0.0 + 1.0im)))[1]
 
 # output
 (var"1" = 6.2 + 5.4im, var"2" = -5.4 + 6.2im)
@@ -548,8 +552,8 @@ Complex differentiation is often viewed in the lens of directional derivatives. 
 For completeness, we can also consider the derivative along the imaginary axis  $\texttt{lim}_{\Delta y \rightarrow 0} \frac{f(x, y+\Delta y)-f(x, y)}{i\Delta y}$. Here this simplifies to $\texttt{lim}_{u(x, y+\Delta y)-u(x, y) + i \left[ v(x, y+\Delta y)-v(x, y)\right]}{i\Delta y} = -i\frac{\partial}{\partial y} u(x,y) + \frac{\partial}{\partial y} v(x,y)$. Except for the $i$ in the denominator of the limit, this is the same as the result of Forward mode, when seeding x with a shadow of `0.0 + 1.0im`. We can thus compute the derivative along the real axis by multiplying our second Forward mode call by `-im`.
 
 ```jldoctest complex
-d_real = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
-d_im   = -im * Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
+d_real = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0 + 0.0im))[1]
+d_im = -im * Enzyme.autodiff(Forward, f, Duplicated(z, 0.0 + 1.0im))[1]
 
 (d_real, d_im)
 
@@ -688,20 +692,20 @@ struct LList
 end
 
 function make_list(x::Vector)
-   result = nothing
-   for value in reverse(x)
-      result = LList(result, value)
-   end
-   return result
+    result = nothing
+    for value in reverse(x)
+        result = LList(result, value)
+    end
+    return result
 end
 
 function list_sum(list::Union{Nothing, LList})
-   result = 0.0
-   while list != nothing
-     result += list.value
-     list = list.prev
-   end
-   return result
+    result = 0.0
+    while list != nothing
+        result += list.value
+        list = list.prev
+    end
+    return result
 end
 
 list = make_list([1.0, 2.0, 3.0])

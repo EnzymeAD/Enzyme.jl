@@ -186,7 +186,7 @@ julia> gradient(ForwardWithPrimal, rosenbrock_inp, [1.0, 2.0])
 julia> # in forward mode, we can also optionally pass a chunk size
        # to specify the number of derivatives computed simulateneously
        # using vector forward mode
-       gradient(Forward, rosenbrock_inp, [1.0, 2.0]; chunk=Val(1))
+       gradient(Forward, rosenbrock_inp, [1.0, 2.0]; chunk = Val(1))
 ([-400.0, 200.0],)
 ```
 
@@ -203,22 +203,22 @@ Both forward and reverse modes take an optional chunk size to compute several de
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
-julia> jacobian(Reverse, foo, [1.0, 2.0]) 
+julia> jacobian(Reverse, foo, [1.0, 2.0])
 ([-400.0 200.0; 2.0 1.0],)
 
-julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0]) 
+julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0])
 (derivs = ([-400.0 200.0; 2.0 1.0],), val = [100.0, 2.0])
 
-julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2)) 
+julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk = Val(2))
 ([-400.0 200.0; 2.0 1.0],)
 
-julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2), n_outs=Val((2,)))
+julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk = Val(2), n_outs = Val((2,)))
 ([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(Forward, foo, [1.0, 2.0])
 ([-400.0 200.0; 2.0 1.0],)
 
-julia> jacobian(Forward, foo, [1.0, 2.0], chunk=Val(2))
+julia> jacobian(Forward, foo, [1.0, 2.0], chunk = Val(2))
 ([-400.0 200.0; 2.0 1.0],)
 ```
 
@@ -321,12 +321,13 @@ For more information see the [`EnzymeRules.@easy_rule`](@ref) documentation.
 using Enzyme
 
 function f(x, y)
-    return (x*x, cos(y) * x)
+    return (x * x, cos(y) * x)
 end
 
-Enzyme.EnzymeRules.@easy_rule(f(x,y),
+Enzyme.EnzymeRules.@easy_rule(
+    f(x, y),
     # df1/dx, #df1/dy
-    (2*x, @Constant),
+    (2 * x, @Constant),
     # df2/dx, #df2/dy
     (cos(y), x * sin(y))
 )

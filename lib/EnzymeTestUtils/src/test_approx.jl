@@ -11,7 +11,7 @@ using LinearAlgebra
 function zero_copy(x)
     y = zero(parent(x))
     copyto!(x.uplo == 'U' ? UpperTriangular(y) : LowerTriangular(y), x.uplo == 'U' ? UpperTriangular(x) : LowerTriangular(x))
-    y
+    return y
 end
 function test_approx(x::LinearAlgebra.HermOrSym{<:Number}, y::LinearAlgebra.HermOrSym{<:Number}, msg; kwargs...)
     # on 1.11+ similar of a hermitian or symmetric leaves the other part of the array undefined

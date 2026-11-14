@@ -53,10 +53,10 @@ Use with caution.
 ```jldoctest
 Enzyme.@import_frule(typeof(Base.sort), Any);
 
-x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
+x = [1.0, 2.0, 0.0]; dx = [0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
 
-Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
-Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
+Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx, ddx)))
+Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx, ddx)))
 Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
 Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
 

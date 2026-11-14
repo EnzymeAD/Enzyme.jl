@@ -1,5 +1,5 @@
 # From LinearAlgebra ~/.julia/juliaup/julia-1.10.0-beta3+0.x64.apple.darwin14/share/julia/stdlib/v1.10/LinearAlgebra/src/generic.jl:1110
-@inline function compute_lu_cache(cache_A::AT, b::BT) where {AT,BT}
+@inline function compute_lu_cache(cache_A::AT, b::BT) where {AT, BT}
     LinearAlgebra.require_one_based_indexing(cache_A, b)
     m, n = size(cache_A)
 
@@ -19,7 +19,7 @@
     return LinearAlgebra.qr(cache_A, ColumnNorm())
 end
 
-@inline onedimensionalize(::Type{T}) where {T<:Array} = Vector{eltype(T)}
+@inline onedimensionalize(::Type{T}) where {T <: Array} = Vector{eltype(T)}
 
 # Triangular solves for derivatives. For a strided triangular BLAS matrix, `ldiv!` and `\`
 # call LAPACK's trtrs, which besides solving checks the matrix for singularity, which the
@@ -79,12 +79,12 @@ _trisolve(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra
 #   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(\)},
-    ::Type{RT},
-    A::Annotation{AT},
-    b::Annotation{BT},
-) where {RT,AT<:Array,BT<:Array}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        A::Annotation{AT},
+        b::Annotation{BT},
+    ) where {RT, AT <: Array, BT <: Array}
 
     cache_A = if EnzymeRules.overwritten(config)[2]
         copy(A.val)
@@ -124,11 +124,11 @@ function EnzymeRules.augmented_primal(
     end
 
     UT = Union{
-        LinearAlgebra.Diagonal{eltype(AT),onedimensionalize(BT)},
-        LinearAlgebra.LowerTriangular{eltype(AT),AT},
-        LinearAlgebra.UpperTriangular{eltype(AT),AT},
-        LinearAlgebra.LU{eltype(AT),AT,Vector{Int}},
-        LinearAlgebra.QRPivoted{eltype(AT),AT,onedimensionalize(BT),Vector{Int}},
+        LinearAlgebra.Diagonal{eltype(AT), onedimensionalize(BT)},
+        LinearAlgebra.LowerTriangular{eltype(AT), AT},
+        LinearAlgebra.UpperTriangular{eltype(AT), AT},
+        LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
+        LinearAlgebra.QRPivoted{eltype(AT), AT, onedimensionalize(BT), Vector{Int}},
     }
 
     cache = NamedTuple{
@@ -136,10 +136,10 @@ function EnzymeRules.augmented_primal(
         Tuple{
             eltype(RT),
             EnzymeRules.needs_shadow(config) ?
-            (
-                EnzymeRules.width(config) == 1 ? eltype(RT) :
-                NTuple{EnzymeRules.width(config),eltype(RT)}
-            ) : Nothing,
+                (
+                    EnzymeRules.width(config) == 1 ? eltype(RT) :
+                    NTuple{EnzymeRules.width(config), eltype(RT)}
+                ) : Nothing,
             UT,
             typeof(cache_b),
         },
@@ -157,13 +157,13 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(\)},
-    ::Type{RT},
-    cache,
-    A::Annotation{<:Array},
-    b::Annotation{<:Array},
-) where {RT}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        cache,
+        A::Annotation{<:Array},
+        b::Annotation{<:Array},
+    ) where {RT}
 
     y, dys, cache_A, cache_b = cache
 
@@ -225,13 +225,13 @@ const EnzymeTriangulars = Union{
 }
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(ldiv!)},
-    ::Type{RT},
-    Y::Annotation{YT},
-    A::Annotation{AT},
-    B::Annotation{BT},
-) where {RT,YT<:Array,AT<:EnzymeTriangulars,BT<:Array}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(ldiv!)},
+        ::Type{RT},
+        Y::Annotation{YT},
+        A::Annotation{AT},
+        B::Annotation{BT},
+    ) where {RT, YT <: Array, AT <: EnzymeTriangulars, BT <: Array}
     cache_Y = EnzymeRules.overwritten(config)[1] ? copy(Y.val) : Y.val
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     cache_A = compute_lu_cache(cache_A, B.val)
@@ -242,7 +242,7 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn{
         EnzymeRules.primal_type(config, RT),
         EnzymeRules.shadow_type(config, RT),
-        Tuple{typeof(cache_Y),typeof(cache_A),typeof(cache_B)},
+        Tuple{typeof(cache_Y), typeof(cache_A), typeof(cache_B)},
     }(
         primal,
         shadow,
@@ -251,17 +251,17 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(ldiv!)},
-    ::Type{RT},
-    cache,
-    Y::Annotation{YT},
-    A::Annotation{AT},
-    B::Annotation{BT},
-) where {YT<:Array,RT,AT<:EnzymeTriangulars,BT<:Array}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(ldiv!)},
+        ::Type{RT},
+        cache,
+        Y::Annotation{YT},
+        A::Annotation{AT},
+        B::Annotation{BT},
+    ) where {YT <: Array, RT, AT <: EnzymeTriangulars, BT <: Array}
     if !isa(Y, Const)
         (cache_Yout, cache_A, cache_B) = cache
-        for b = 1:EnzymeRules.width(config)
+        for b in 1:EnzymeRules.width(config)
             dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
             z = _trisolve(adjoint(cache_A), dY)
             if !isa(B, Const)
@@ -328,14 +328,14 @@ end
 # B(out) = inv(A) B(in)
 # dB(out) = inv(A) [ dB(in) - dA B(out) ]
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    func::Const{typeof(ldiv!)},
-    RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
-    fact::Annotation{<:Cholesky},
-    B::Annotation{<:AbstractVecOrMat};
-    kwargs...,
-)
-    if B isa Const
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(ldiv!)},
+        RT::Type{<:Union{Const, Duplicated, BatchDuplicated}},
+        fact::Annotation{<:Cholesky},
+        B::Annotation{<:AbstractVecOrMat};
+        kwargs...,
+    )
+    return if B isa Const
         retval = func.val(fact.val, B.val; kwargs...)
         if EnzymeRules.needs_primal(config)
             retval
@@ -581,16 +581,16 @@ function EnzymeRules.reverse(
             nothing
         end
     end
-    
+
     return (nothing, nothing, nothing, dα, dβ)
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(det)},
-    ::Type{RT},
-    A::Annotation{AT},
-) where {RT,AT<:StridedMatrix}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(det)},
+        ::Type{RT},
+        A::Annotation{AT},
+    ) where {RT, AT <: StridedMatrix}
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     res = det(A.val)
     retres = EnzymeRules.needs_primal(config) ? res : nothing
@@ -609,12 +609,12 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(det)},
-    dret::Active,
-    cache,
-    A::Annotation{<:StridedMatrix},
-)
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(det)},
+        dret::Active,
+        cache,
+        A::Annotation{<:StridedMatrix},
+    )
     ret, cache_A = cache
     if !isa(A, Const)
         A.dval .+= inv(cache_A)' * dot(ret, dret.val)
@@ -622,21 +622,21 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(det)},
-    ::Type{<:Const},
-    cache,
-    A::Annotation{<:Array},
-)
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(det)},
+        ::Type{<:Const},
+        cache,
+        A::Annotation{<:Array},
+    )
     return (nothing,)
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    func::Const{typeof(det)},
-    ::Type{RT},
-    A::Annotation{<:StridedMatrix},
-) where {RT}
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(det)},
+        ::Type{RT},
+        A::Annotation{<:StridedMatrix},
+    ) where {RT}
     res = det(A.val)
     dres = !isa(A, Const) ? res * sum(diag(A.val \ A.dval)) : zero(res)
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
@@ -651,11 +651,11 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(logdet)},
-    ::Type{RT},
-    A::Annotation{AT},
-) where {RT,AT<:StridedMatrix}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(logdet)},
+        ::Type{RT},
+        A::Annotation{AT},
+    ) where {RT, AT <: StridedMatrix}
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     res = logdet(A.val)
     retres = EnzymeRules.needs_primal(config) ? res : nothing
@@ -673,32 +673,32 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(logdet)},
-    dret::Active,
-    cache_A,
-    A::Annotation{<:StridedMatrix},
-)
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(logdet)},
+        dret::Active,
+        cache_A,
+        A::Annotation{<:StridedMatrix},
+    )
     !isa(A, Const) && (A.dval .+= dret.val * inv(cache_A)')
     return (nothing,)
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(logdet)},
-    ::Type{<:Const},
-    cache,
-    A::Annotation{<:StridedMatrix},
-)
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(logdet)},
+        ::Type{<:Const},
+        cache,
+        A::Annotation{<:StridedMatrix},
+    )
     return (nothing,)
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    func::Const{typeof(logdet)},
-    ::Type{RT},
-    A::Annotation{<:StridedMatrix},
-) where {RT}
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(logdet)},
+        ::Type{RT},
+        A::Annotation{<:StridedMatrix},
+    ) where {RT}
     res = logdet(A.val)
     dres = !isa(A, Const) ? sum(diag(A.val \ A.dval)) : zero(res)
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)

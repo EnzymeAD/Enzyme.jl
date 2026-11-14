@@ -31,9 +31,9 @@ end
 
 
 @inline function EnzymeCore.make_zero(
-	::Type{Array{Union{}, N}},
+        ::Type{Array{Union{}, N}},
         seen::IdDict,
-	prev::Array{Union{}, N},
+        prev::Array{Union{}, N},
         ::Val{copy_if_inactive} = Val(false),
     )::Array{Union{}, N} where {copy_if_inactive, N}
     if haskey(seen, prev)

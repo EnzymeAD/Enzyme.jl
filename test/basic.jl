@@ -755,7 +755,7 @@ struct WrapJ11{T, V}
 end
 
 function combined_j11(d::WrapJ11, p::Vector{Float64}, z::Vector{ComplexF64})
-    N  = length(d.λQ)
+    N = length(d.λQ)
     ld = sum(log, d.λQ)
     cp = abs(dot(z, z))
     return d.ρ * ld - N * 0.5 + cp + @inbounds p[1]
@@ -768,11 +768,13 @@ const LAMBDA_J11 = [2.0]
     p0 = [1.0]
     ρ0 = 1.5
     dp = zero(p0)
-    
-    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse),
+
+    res = Enzyme.autodiff(
+        set_runtime_activity(Enzyme.Reverse),
         Const((p, ρ, z) -> combined_j11(WrapJ11(ρ, LAMBDA_J11), p, z)), Active,
-        Duplicated(p0, dp), Active(ρ0), Const(Z_DATA_J11))
-    
+        Duplicated(p0, dp), Active(ρ0), Const(Z_DATA_J11)
+    )
+
     @test res[1][2] ≈ log(2.0)
 end
 
@@ -840,12 +842,12 @@ function generate_callbacks_bcm(solution_value, isdae, times, buffer_val)
     t, duplicate_times = separate_nonunique_bcm(times)
     solution = isdae ? solution_value : nothing
     buffer = make_buffer_bcm(buffer_val)
-    
+
     cb = PresetTimeCallback_BCM(
         times,
         ReverseLossCallback_BCM(solution, buffer)
     )
-    
+
     cb_set = if duplicate_times !== nothing
         cb_duplicate = PresetTimeCallback_BCM(
             duplicate_times[1],
@@ -855,14 +857,14 @@ function generate_callbacks_bcm(solution_value, isdae, times, buffer_val)
     else
         CallbackSet_BCM((cb, nothing))
     end
-    
+
     return cb_set, duplicate_times
 end
 
 function differentiate_bcm(buffer_val)
     solution = [0.5]
     times = collect(range(0.0, 1.0, length = 5))
-    
+
     return Enzyme.autodiff(
         Enzyme.set_runtime_activity(Enzyme.Forward),
         Enzyme.Const(generate_callbacks_bcm),
@@ -877,7 +879,7 @@ end
     # Test Val(:none) (works previously)
     res_none = differentiate_bcm(Val(:none))
     @test res_none !== nothing
-    
+
     # Test Val(:vector) (previously failed on 1.11 with IllegalTypeAnalysisException)
     res_vector = differentiate_bcm(Val(:vector))
     @test res_vector !== nothing
@@ -951,4 +953,3 @@ f3868(a, b) = (p = Base.inferencebarrier(make3868)((a, b))::Prob3868; p.tspan[1]
     @test autodiff(Forward, f3868, Duplicated, Duplicated(2.0f0, 1.0f0), Const(3.0f0))[1] ≈ 3.0f0
     @test autodiff(Forward, f3868, Duplicated, Const(2.0f0), Duplicated(3.0f0, 1.0f0))[1] ≈ 2.0f0
 end
-

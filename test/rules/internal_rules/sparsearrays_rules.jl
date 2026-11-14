@@ -23,7 +23,7 @@ function step_test!(integ::Integrator_test)
     du = zeros(T_test, 2)
     integ.f(du, integ.u, integ.p, integ.t)
     integ.u .+= integ.dt .* du
-    integ.t += integ.dt
+    return integ.t += integ.dt
 end
 
 function solve_custom_test(integ)
@@ -47,11 +47,11 @@ end
     p = [2.0]
     dp = Enzyme.make_zero(p)
     Enzyme.autodiff(
-           Enzyme.set_runtime_activity(Enzyme.Reverse),
-           f_with_sparse_constructor,
-           Active,
-           Duplicated(p, dp),
-       )[1]
+        Enzyme.set_runtime_activity(Enzyme.Reverse),
+        f_with_sparse_constructor,
+        Active,
+        Duplicated(p, dp),
+    )[1]
     @test dp ≈ [1.0]
 end
 
@@ -140,11 +140,10 @@ end
 @testset "Sparse mul! with aliased shadow (primal corruption)" begin
     p = [1.0, 2.0]
     dp_sparse = Enzyme.make_zero(p)
-    
+
     # Before the fix, this would corrupt U_sparse_test.A1.nzval and produce wrong gradients.
     Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Reverse), f_sparse_test, Active, Duplicated(p, dp_sparse))
-    
+
     @test dp_sparse ≈ [-0.94, 0.53]
     @test U_sparse_test.A1.nzval == [1.0]
 end
-
