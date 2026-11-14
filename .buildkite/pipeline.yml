@@ -73,12 +73,12 @@ steps:
 #           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
 #           push!(pkgs, PackageSpec(; name="AMDGPU"))
 #           Pkg.develop(pkgs)' || exit 3
-# 
+#
 #       echo "+++ Run tests"
 #       julia --color=yes test/amdgpu.jl
 #     env:
 #       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-# 
+#
   - label: "Metal Julia v{{matrix.version}} - GPUCompiler {{matrix.gpucompiler}}"
     matrix:
       setup:

@@ -359,18 +359,18 @@ end
                 δs = ntuple(Val(4)) do i
                     σs[i] * as[i].params
                 end
-            
+
                 pmap = VLBISkyModels.PolExp2Map!(δs..., grid)
 
                 mmodel = modify(RingTemplate(RadialDblPower(ain, aout), AzimuthalUniform()), Stretch(r))
                 mimg = intensitymap(mmodel, grid)
-            
+
                 ft = zero(eltype(mimg))
                 for i in eachindex(pmap, mimg)
                     pmap[i] *= mimg[i]
                     ft += pmap[i].I
                 end
-            
+
                 pmap .= ftot .* pmap ./ ft
                 x0, y0 = centroid(pmap)
                 m = ContinuousImage(pmap, BSplinePulse{3}())
@@ -390,7 +390,7 @@ end
                 ain = Uniform(0.0, 5.0),
                 aout = Uniform(0.0, 5.0),
                 r = Uniform(μas2rad(1.0), μas2rad(30.0)),
-            )   
+            )
             skym = SkyModel(polarizedsky, skyprior, grid; metadata = skymeta)
 
             function fgain(x)

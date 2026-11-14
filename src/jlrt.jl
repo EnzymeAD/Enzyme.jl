@@ -1,5 +1,5 @@
 # For julia runtime function emission
-    
+
 function emit_allocobj!(
     B::LLVM.IRBuilder,
     @nospecialize(tag::LLVM.Value),
@@ -21,7 +21,7 @@ function emit_allocobj!(
 
     pgcstack = reinsert_gcmarker!(fn, B)
     bc = bitcast!(B, pgcstack, T_ppjlvalue, LLVM.name(pgcstack)*"_bc")
-    
+
     ct = inbounds_gep!(
         B,
         T_pjlvalue,
@@ -30,7 +30,7 @@ function emit_allocobj!(
     )
 
 
-    @static if VERSION < v"1.11.0-"    
+    @static if VERSION < v"1.11.0-"
         ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
         T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
@@ -367,7 +367,7 @@ function emit_svec!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     LLVM.FunctionType(T_prjlvalue, [sz]; vararg = true)
 
     sz = convert(LLVMType, Csize_t)
-    
+
     nargs = Vector{LLVM.Value}(undef, 1+length(args))
     nargs[1] = LLVM.ConstantInt(sz, length(args))
     for (i, v) in enumerate(args)
@@ -395,7 +395,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
                 return val
             end
         end
-        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val])
     end
     if !guaranteed_nonactive(TT, world)
         legal2, TT2, _ = abs_typeof(val, enzyme_ctx)
@@ -424,7 +424,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
 end
 
 @inline function ref_if_mixed(val::VT) where VT
-    areg = active_reg_nothrow(VT) 
+    areg = active_reg_nothrow(VT)
     if areg == ActiveState || areg == MixedState
         Ref(val)
     else
@@ -440,9 +440,9 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
         if legal && active_reg(TT, world) == AnyState
             return val
         end
-        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val])
     end
-    
+
     if !guaranteed_nonactive(TT, world)
         obj = emit_allocobj!(B, Base.RefValue{TT})
         lty = convert(LLVMType, TT)
@@ -875,13 +875,13 @@ function get_array_struct()
         #     // T inl[];
         # #endif
         # } jl_genericmemory_t;
-        # 
+        #
         # JL_EXTENSION typedef struct {
         #     JL_DATA_TYPE
         #     void *ptr_or_offset;
         #     jl_genericmemory_t *mem;
         # } jl_genericmemoryref_t;
-        # 
+        #
         # JL_EXTENSION typedef struct {
         #     JL_DATA_TYPE
         #     jl_genericmemoryref_t ref;
@@ -1144,7 +1144,7 @@ end
 
 # nel - number of elements
 #
-@static if VERSION >= v"1.11" 
+@static if VERSION >= v"1.11"
 function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.Value)
     elsz = LLVM.ConstantInt(Compiler.datatype_layoutsize(memty))
     isboxed = Base.datatype_arrayelem(memty) == 1

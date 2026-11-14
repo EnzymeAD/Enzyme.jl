@@ -31,7 +31,7 @@
         if aref == DupState
 
             if batchshadowarg === Nothing && primarg !== Nothing
-                # in this case the arg is inactive [as we passed nothing for the shadow]. 
+                # in this case the arg is inactive [as we passed nothing for the shadow].
                 # However, we still have to return a duplicated value, as it is required by type.
                 if RuntimeActivity
                     return quote
@@ -58,7 +58,7 @@
             end
         else
             if batchshadowarg === Nothing && primarg !== Nothing
-                # in this case the arg is inactive [as we passed nothing for the shadow]. 
+                # in this case the arg is inactive [as we passed nothing for the shadow].
                 # However, we still have to return a duplicated value, as it is required by type.
                 if aref == ActiveState
                     return quote
@@ -464,7 +464,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR, e
                 if !found_partial
                     return false
                 end
-                if !get_runtime_activity(gutils)                
+                if !get_runtime_activity(gutils)
                     if !guaranteed_const_nongen(typ_partial, world)
                         return false
                     end

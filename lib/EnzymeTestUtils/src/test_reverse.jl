@@ -39,7 +39,7 @@ additional constraints:
 - `rtol`: Relative tolerance for `isapprox`.
 - `atol`: Absolute tolerance for `isapprox`.
 - `testset_name`: Name to use for a testset in which all tests are evaluated.
-- `output_tangent`: Optional final tangent to provide at the beginning of the reverse-mode differentiation 
+- `output_tangent`: Optional final tangent to provide at the beginning of the reverse-mode differentiation
 
 # Examples
 

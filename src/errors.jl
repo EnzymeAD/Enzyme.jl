@@ -167,7 +167,7 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": You are currently on Julia 1.12, which changed its calling convention. Tracking issue for Enzyme adapting to this new calling convention is https://github.com/EnzymeAD/Enzyme.jl/issues/2707.\n"; 
+            ": You are currently on Julia 1.12, which changed its calling convention. Tracking issue for Enzyme adapting to this new calling convention is https://github.com/EnzymeAD/Enzyme.jl/issues/2707.\n";
             color = :cyan,
         )
     else
@@ -292,7 +292,7 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
             hint = "You appear to be returning a tuple of shadows, but neither primal nor shadow were requested"
         elseif fwd_RT <: RealRt && width == 1
             hint = "You appear to be returning a primal or shadow, but neither were requested"
-        elseif fwd_RT <: RealRt 
+        elseif fwd_RT <: RealRt
             hint = "You appear to be returning a primal, but it was not requested"
         else
             hint = "You should return nothing"
@@ -360,7 +360,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         elseif EnzymeRules.primal_type(fwd_RT) == Nothing
             hint = "Missing primal return"
         elseif EnzymeRules.shadow_type(fwd_RT) == Nothing
-            hint = "Missing shadow return"      
+            hint = "Missing shadow return"
         elseif EnzymeRules.primal_type(fwd_RT) != RealRt
             if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
@@ -390,11 +390,11 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         "primal and shadow configuration"
     elseif EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
         if !(fwd_RT <: EnzymeRules.AugmentedReturn)
-            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"
         elseif EnzymeRules.primal_type(fwd_RT) == Nothing
             hint = "Missing primal return"
         elseif EnzymeRules.shadow_type(fwd_RT) != Nothing
-            hint = "Shadow return was not requested"      
+            hint = "Shadow return was not requested"
         elseif EnzymeRules.primal_type(fwd_RT) != RealRt
             if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
@@ -407,7 +407,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
     elseif !EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
 
         if !(fwd_RT <: EnzymeRules.AugmentedReturn)
-            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"
         elseif EnzymeRules.primal_type(fwd_RT) != Nothing
             hint = "Primal was not requested"
         elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
@@ -433,7 +433,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         "shadow-only configuration"
     else
         if !(fwd_RT <: EnzymeRules.AugmentedReturn)
-            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"
         elseif EnzymeRules.primal_type(fwd_RT) != Nothing
             hint = "Primal was not requested"
         elseif EnzymeRules.shadow_type(fwd_RT) != Nothing
@@ -1157,11 +1157,11 @@ function julia_error(
 	        println(io, "\nValue of type: ", Core.Typeof(obj))
 		println(io ,  " of value    : ", obj)
 		if obj0 isa Core.Binding
-		println(io ,  " binding     : ", obj0)	    
+		println(io ,  " binding     : ", obj0)
 		end
 		println(io)
 	    end
-	    if !isa(val, LLVM.Argument) && !isa(val, LLVM.GlobalVariable) 
+	    if !isa(val, LLVM.Argument) && !isa(val, LLVM.GlobalVariable)
                 print(io, "\n Inverted pointers: \n")
                 ip = API.EnzymeGradientUtilsInvertedPointersToString(gutils)
                 sval = Base.unsafe_string(ip)
@@ -1233,7 +1233,7 @@ function julia_error(
                 println(io, "within ", mi)
             end
         end
-	    
+
         mi = nothing
         world = nothing
 
@@ -1313,8 +1313,8 @@ function julia_error(
 	    world = nothing
             EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
         end
-                            
-        if errtype == API.ET_InternalError 
+
+        if errtype == API.ET_InternalError
             throw(err)
         else
             Core.println(err)
@@ -1445,7 +1445,7 @@ function julia_error(
 		    end
 		end
 @static if VERSION < v"1.11-"
-else   
+else
             if isa(cur, LLVM.ConstantExpr)
                 larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(position(prevbb))))
                     legal2, obj = absint(larg, enzyme_ctx)
@@ -1495,8 +1495,8 @@ end
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
-			    T_int8 = LLVM.Int8Type() 
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+			    T_int8 = LLVM.Int8Type()
 			    T_size_t = convert(LLVM.LLVMType, UInt)
 			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
@@ -1512,7 +1512,7 @@ end
                                 unsafe_to_llvm(prevbb, instance)
                             else
                                 sres = emit_allocobj!(prevbb, Base.RefValue{TT})
-			        T_int8 = LLVM.Int8Type() 
+			        T_int8 = LLVM.Int8Type()
 			        T_size_t = convert(LLVM.LLVMType, UInt)
 			        LLVM.memset!(prevbb, bitcast!(prevbb, sres, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                                 push!(created, sres)
@@ -1694,7 +1694,7 @@ end
                     return shadowres
                 end
             end
-           
+
 	    if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end])) || (isa(cur,LLVM.ConstantExpr) &&  opcode(cur) in (LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMGetElementPtr))
                 lhs = make_replacement(operands(cur)[1], prevbb)
                 if illegal
@@ -1749,7 +1749,7 @@ end
                 push!(created, phi2)
                 return phi2
             end
-            
+
             tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, cur))
             st = API.EnzymeTypeTreeToString(tt)
             st2 = Base.unsafe_string(st)
@@ -1809,7 +1809,7 @@ end
                 Base.show_backtrace(io, bt)
             end
         end
-        
+
 	    mi = nothing
         world = nothing
 

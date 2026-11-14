@@ -90,7 +90,7 @@ end
                 end
             end
         end
-        
+
 	@testset "structured NaN array inputs/outputs" begin
 	    @testset for Tret in (Const, Duplicated, BatchDuplicated),
 		     Tx in (Const, Duplicated, BatchDuplicated)

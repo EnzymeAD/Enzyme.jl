@@ -136,7 +136,7 @@ dy = [1.0]
 grad(x, dx, y, dy)
 
 # dx now contains the gradient
-@show dx 
+@show dx
 
 # To compute the hessian, we need to take the dervative of this gradient function at every input.
 # Following the same seeding strategy as before, we now seed both

@@ -689,10 +689,10 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
         if fwd
             lookup_src = false
             shadowsrc = invert_pointer(gutils, memoryptr, B)
-    	    primalsrc = new_from_original(gutils, memoryptr) 
+    	    primalsrc = new_from_original(gutils, memoryptr)
         else
             shadowsrc = invert_pointer(gutils, shadowsrc, B)
-	        primalsrc = new_from_original(gutils, primalsrc) 
+	        primalsrc = new_from_original(gutils, primalsrc)
             shadowsrc = lookup_value(gutils, shadowsrc, B)
     	    if get_runtime_activity(gutils)
     	       primalsrc = lookup_value(gutils, primalsrc, B)
@@ -726,7 +726,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
 
     shadowsrcs = LLVM.Value[]
     shadowdsts = LLVM.Value[]
-        
+
     # src already has done the lookup from the argument
     primalsrc0 = if get_runtime_activity(gutils)
 	    if lookup_src
@@ -907,7 +907,7 @@ end
         shadowres = LLVM.Value(unsafe_load(shadowR))
 
         len = new_from_original(gutils, origops[3])
-        memoryptr = origops[2]        
+        memoryptr = origops[2]
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres, enzyme_ctx; len, memoryptr)
     end
 

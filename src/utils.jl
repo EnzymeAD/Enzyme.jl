@@ -325,7 +325,7 @@ Callers are responsible for setting `ci.edges`
 """
 function create_fresh_codeinfo(fn, source, world, slotnames, code)
     ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
-    
+
     @static if isdefined(Core, :DebugInfo)
         # TODO: Add proper debug info
         ci.debuginfo = Core.DebugInfo(:none)
@@ -387,7 +387,7 @@ end
     end
 
     sig = Tuple{ft, tt.parameters...}
-    
+
     lookup_result = lookup_world(
         sig, world, method_table, min_world, max_world
     )
@@ -396,7 +396,7 @@ end
     end
 
     match = lookup_result::Core.MethodMatch
-    
+
     mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
                (Any, Any, Any), match.method, match.spec_types, match.sparams)
     return mi::Core.MethodInstance
@@ -431,9 +431,9 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
-    
+
     mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
-    
+
     code = Any[Core.Compiler.ReturnNode(mi)]
 
     ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
@@ -507,7 +507,7 @@ end
             sum += sizeof(tys[idx])
             idx+=1
         end
-        return sum 
+        return sum
     else
         fieldoffset(T, i)
     end
@@ -590,7 +590,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
 
         if ekind == "enzymejl_returnRoots"
             nroots = parse(Int, LLVM.value(attr))
-    
+
             T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
             T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
@@ -608,7 +608,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
             if !LLVM.is_opaque(vt)
                 @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
-        
+
             return ety::LLVM.LLVMType
         end
 
@@ -645,7 +645,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
     msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
     ir = string(fn)
     bt = nothing
-    if btval !== nothing        
+    if btval !== nothing
         bt = GPUCompiler.backtrace(btval)
     end
     if mi !== nothing && world !== nothing

@@ -65,7 +65,7 @@ function _ffun(x::T, p::T, q::T) where {T<:AbstractFloat}
     return q * x / (p * (1 - x))
 end
 
-function _a1fun(p::T, q::T, f::T) where {T<:AbstractFloat} 
+function _a1fun(p::T, q::T, f::T) where {T<:AbstractFloat}
     # a₁ coefficient of the continued fraction for ₂F₁ representation
     return p * f * (q - 1) / (q * (p + 1))
 end
@@ -85,12 +85,12 @@ function _bnfun(p::T, q::T, f::T, n::Int) where {T<:AbstractFloat}
     return x / y
 end
 
-function _dK_dp(x::T, p::T, q::T, K::T, ψpq::T, ψp::T) where {T<:AbstractFloat} 
+function _dK_dp(x::T, p::T, q::T, K::T, ψpq::T, ψp::T) where {T<:AbstractFloat}
     # ∂K/∂p using digamma identities: d/dp log B(p,q) = ψ(p) - ψ(p+q)
     return K * (log(x) - inv(p) + ψpq - ψp)
 end
 
-function _dK_dq(x::T, p::T, q::T, K::T, ψpq::T, ψq::T) where {T<:AbstractFloat} 
+function _dK_dq(x::T, p::T, q::T, K::T, ψpq::T, ψq::T) where {T<:AbstractFloat}
     # ∂K/∂q using identical pattern
     K * (log1p(-x) + ψpq - ψq)
 end
@@ -141,7 +141,7 @@ function _dan_dq(p::T, q::T, f::T, n::Int) where {T<:AbstractFloat}
     # Differentiate only the q-dependent factor G(q) = (p+q+n-2)*(q-n):
     #   dG/dq = (q-n) + (p+q+n-2) = p + 2q - 2.
 
-    # This is equivalent to  
+    # This is equivalent to
     #   return _anfun(p,q,f,n) * (inv(p+q+n-2) + inv(q-n))
     # but more precise.
 
@@ -262,7 +262,7 @@ function _beta_inc_grad(a, b, x; maxapp::Int=200, minapp::Int=3)
     #    and its derivatives to update I and ∂I/∂(p,q). Stop on relative convergence of all.
     for n=1:maxapp
 
-        # Update continuants. 
+        # Update continuants.
         An, Bn, an, bn = _nextapp(f, p, q, n, App, Ap, Bpp, Bp)
         dan            = _dan_dp(p, q, f, n)
         dbn            = _dbn_dp(p, q, f, n)
@@ -309,7 +309,7 @@ function _beta_inc_grad(a, b, x; maxapp::Int=200, minapp::Int=3)
         dI_dq  = dK_dq_val * Cn + K * (invBn * dAn_dq - (An * invBn2) * dBn_dq)
         Ixpqn  = K * Cn
 
-        # Decide convergence: 
+        # Decide convergence:
         if n >= minapp
             # Relative convergence for I, ∂I/∂p, ∂I/∂q (guards against tiny denominators)
             denomI = max(abs(Ixpqn), abs(Ixpq), eps(T))

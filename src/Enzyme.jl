@@ -1129,7 +1129,7 @@ end
     autodiff(::Function, ::Mode, args...)
 
 Specialization of [`autodiff`](@ref) to handle do argument closures.
- 
+
 Example:
 
 ```jldoctest
