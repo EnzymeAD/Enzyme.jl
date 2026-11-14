@@ -1,45 +1,46 @@
 @inline LLT_ALIGN(x::Int, sz::Int) = (((x) + (sz) - 1) & ~((sz) - 1))
 function array_shadow_handler(
-    B::LLVM.API.LLVMBuilderRef,
-    OrigCI::LLVM.API.LLVMValueRef,
-    numArgs::Csize_t,
-    Args::Ptr{LLVM.API.LLVMValueRef},
-    gutils::API.EnzymeGradientUtilsRef,
-)::LLVM.API.LLVMValueRef
+        B::LLVM.API.LLVMBuilderRef,
+        OrigCI::LLVM.API.LLVMValueRef,
+        numArgs::Csize_t,
+        Args::Ptr{LLVM.API.LLVMValueRef},
+        gutils::API.EnzymeGradientUtilsRef,
+    )::LLVM.API.LLVMValueRef
+    enzyme_ctx = enzyme_context()
     inst = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    legal, typ, byref = abs_typeof(inst)
+    legal, typ, byref = abs_typeof(inst, enzyme_ctx)
     if !legal
         throw(
             AssertionError(
                 "Could not statically ahead-of-time determine allocation element type of " *
-                string(inst),
+                    string(inst),
             ),
         )
     end
-    
+
 
     b = LLVM.IRBuilder(B)
     orig = LLVM.Value(OrigCI)::LLVM.CallInst
 
     nm = LLVM.name(LLVM.called_operand(orig)::LLVM.Function)
-    
+
     if iszeroinit(typ)
-	# If already zero init we should not need to perform the initial memset.
-	# However as I have yet to actually see such a type exist in the wild, I want to see
-	# what triggers it.
+        # If already zero init we should not need to perform the initial memset.
+        # However as I have yet to actually see such a type exist in the wild, I want to see
+        # what triggers it.
         throw(
             AssertionError(
-	        "THERE IS A TYPE WHICH IS ZERO INIT ($typ)",
+                "THERE IS A TYPE WHICH IS ZERO INIT ($typ)",
             ),
         )
-	# Only the regular, checked version does the zero.
-    	if nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory"
-	   return C_NULL
-	end
+        # Only the regular, checked version does the zero.
+        if nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory"
+            return C_NULL
+        end
     end
 
     typ = eltype(typ)
@@ -48,13 +49,13 @@ function array_shadow_handler(
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
-    for i = 1:numArgs
+    for i in 1:numArgs
         push!(vals, LLVM.Value(unsafe_load(Args, i)))
         push!(valTys, API.VT_Primal)
     end
 
     anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, false) #=lookup=#
-    
+
     isunboxed, elsz, al = Base.uniontype_layout(typ)
 
     isunion = typ isa Union
@@ -69,21 +70,45 @@ function array_shadow_handler(
 
     arlen = nothing
 
+    if nm == "jl_alloc_genericmemory_unchecked" || nm == "ijl_alloc_genericmemory_unchecked"
+        # The unchecked allocator leaves the length for codegen to store, and
+        # the GC reads it to account the malloc'd buffer. Store it before the
+        # next safepoint rather than where the primal's store is mirrored.
+        # The store is volatile since LLVM would otherwise remove it as dead,
+        # not knowing that a GC at an intervening call reads it.
+        stride = elsz + (isunboxed && isunion)
+        nbytes_arg = vals[2]
+        nel = if stride == 0
+            LLVM.ConstantInt(LLVM.value_type(nbytes_arg), 0, false)
+        else
+            LLVM.udiv!(b, nbytes_arg, LLVM.ConstantInt(LLVM.value_type(nbytes_arg), stride, false))
+        end
+        ST = get_memory_struct()
+        lenptr = inbounds_gep!(
+            b,
+            ST,
+            struct_ptr!(b, anti, ST),
+            LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(0))],
+        )
+        st = LLVM.store!(b, nel, lenptr)
+        LLVM.API.LLVMSetVolatile(st, true)
+    end
+
     nbytes = if memory
-        get_memory_nbytes(b, anti)
+        get_memory_nbytes(b, anti, enzyme_ctx)
     else
         arlen = get_array_len(b, anti)
-    	tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))
-    
-	if elsz == 1 && !isunion
-	   # extra byte for all julia allocated byte arrays
-	   tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.value_type(tot), 1, false))
-	end
-	if isunion
-	    # an extra byte for each isbits union array element, stored after a->maxsize
-	    tot = LLVM.add!(b, tot, prod)
-	end
-	tot
+        tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))
+
+        if elsz == 1 && !isunion
+            # extra byte for all julia allocated byte arrays
+            tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.value_type(tot), 1, false))
+        end
+        if isunion
+            # an extra byte for each isbits union array element, stored after a->maxsize
+            tot = LLVM.add!(b, tot, prod)
+        end
+        tot
     end
 
 
@@ -104,17 +129,18 @@ function register_alloc_handler!(variants, alloc_handler, free_handler)
     for variant in variants
         API.EnzymeRegisterAllocationHandler(variant, alloc_handler, free_handler)
     end
+    return
 end
 
 @inline function register_alloc_rules()
-    register_alloc_handler!(
+    return register_alloc_handler!(
         (
-         "jl_alloc_array_1d", "ijl_alloc_array_1d",
-         "jl_alloc_array_2d", "ijl_alloc_array_2d",
-         "jl_alloc_array_3d", "ijl_alloc_array_3d",
-         "jl_new_array", "ijl_new_array",
-         "jl_alloc_genericmemory", "ijl_alloc_genericmemory",
-	 "jl_alloc_genericmemory_unchecked", "ijl_alloc_genericmemory_unchecked"
+            "jl_alloc_array_1d", "ijl_alloc_array_1d",
+            "jl_alloc_array_2d", "ijl_alloc_array_2d",
+            "jl_alloc_array_3d", "ijl_alloc_array_3d",
+            "jl_new_array", "ijl_new_array",
+            "jl_alloc_genericmemory", "ijl_alloc_genericmemory",
+            "jl_alloc_genericmemory_unchecked", "ijl_alloc_genericmemory_unchecked",
         ),
         @cfunction(
             array_shadow_handler,

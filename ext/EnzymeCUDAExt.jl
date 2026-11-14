@@ -4,11 +4,27 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
-function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
+# A CuPtr is a device address. Use the type tree of a Ptr for it. Type analysis then knows
+# that integer arithmetic on a CuPtr is pointer arithmetic. On Julia 1.13, LLVM folds
+# `CuPtr + n` into an `add i64`. Without this type tree, Enzyme cannot differentiate that add.
+function Enzyme.typetree_inner(::Type{CuPtr{T}}, ctx, dl, seen::Enzyme.Compiler.TypeTreeTable) where {T}
+    return Enzyme.typetree_inner(Ptr{T}, ctx, dl, seen)
+end
+
+# Device pointers and device references refer to mutable device memory. Their activity
+# comes from their element type, as for an Array. `CuRefValue` is not public, and it is in
+# CUDACore on CUDA 6 and in CUDA on CUDA 5. `parentmodule(CuPtr)` is that module.
+const CuRefValue = parentmodule(CuPtr).CuRefValue
+Enzyme.Compiler.is_mutable_array(::Type{<:Union{CuPtr, CuArrayPtr, CuRefValue}}) = true
+
+# Complex is handled here because the shadow operations are element-wise: zeroing is a
+# `memset` sized by `sizeof(T)`, and accumulation is a broadcast, both of which are
+# agnostic to the real/complex split.
+function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
     Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
     return nothing
 end
-function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
+function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
     bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
     CUDA.memset(bytes, UInt8(0), n * sizeof(T))
     return nothing
@@ -116,6 +132,44 @@ const PTR_COPY_DIRECTIONS = (
 
 for (DstPtr, SrcPtr) in PTR_COPY_DIRECTIONS
     @eval begin
+        # the tangent is copied along with the value; a constant source has a zero tangent
+        function EnzymeRules.forward(
+                config::EnzymeRules.FwdConfig,
+                func::Const{typeof(Base.unsafe_copyto!)},
+                ::Type{RT},
+                dest::Annotation{<:$DstPtr{T}},
+                src::Annotation{<:$SrcPtr{T}},
+                n::Const;
+                kwargs...,
+            ) where {RT, T}
+            func.val(dest.val, src.val, n.val; kwargs...)
+            if !(dest isa Const)
+                for batch in 1:EnzymeRules.width(config)
+                    ddest = _shadow(dest, config, batch)
+                    if !(src isa Const)
+                        func.val(ddest, _shadow(src, config, batch), n.val; kwargs...)
+                    elseif T <: Union{AbstractFloat, Complex{<:AbstractFloat}}
+                        _zero!(ddest, 0, n.val)
+                    else
+                        func.val(ddest, src.val, n.val; kwargs...)
+                    end
+                end
+            end
+            if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+                if EnzymeRules.width(config) == 1
+                    Duplicated(dest.val, dest.dval)
+                else
+                    BatchDuplicated(dest.val, dest.dval)
+                end
+            elseif EnzymeRules.needs_shadow(config)
+                dest.dval
+            elseif EnzymeRules.needs_primal(config)
+                dest.val
+            else
+                nothing
+            end
+        end
+
         function EnzymeRules.augmented_primal(
                 config::EnzymeRules.RevConfig,
                 func::Const{typeof(Base.unsafe_copyto!)},
@@ -145,7 +199,7 @@ for (DstPtr, SrcPtr) in PTR_COPY_DIRECTIONS
 		src::Annotation{<:$SrcPtr{T}},
                 n::Const;
                 kwargs...,
-            ) where {RT, T <: AbstractFloat}
+            ) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
                     ddest = _shadow(dest, config, batch)
@@ -177,7 +231,7 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
 		doffs::Const,
 		src::Annotation{<:$SrcArr{T}},
 		soffs::Const,
-                n::Const) where {RT, T<: AbstractFloat}
+                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             func.val(dest.val, doffs.val, src.val, soffs.val, n.val)
             primal = EnzymeRules.needs_primal(config) ? dest.val : nothing
             shadow = if !(RT <: Const) && EnzymeRules.needs_shadow(config) &&
@@ -198,7 +252,7 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
 		doffs::Const,
 		src::Annotation{<:$SrcArr{T}},
 		soffs::Const,
-                n::Const) where {RT, T<: AbstractFloat}
+                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
                     ddest = _shadow(dest, config, batch)

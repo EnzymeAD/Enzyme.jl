@@ -50,7 +50,9 @@ end
         ity = convert(LLVM.LLVMType, Int)
         jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
 
-        FT = LLVM.FunctionType(jlvaluet,  LLVM.LLVMType[jlvaluet, ity, ity])
+        # Julia inlines this function into its caller, whose pgcstack it takes as an
+        # argument to allocate the result (see `Compiler.use_gcstack_arg!`).
+        FT = LLVM.FunctionType(jlvaluet, LLVM.LLVMType[convert(LLVM.LLVMType, Ptr{Cvoid}), jlvaluet, ity, ity])
         llvm_f = LLVM.Function(mod, "f", FT)
         push!(LLVM.function_attributes(llvm_f), LLVM.EnumAttribute("alwaysinline", 0))
 
@@ -59,66 +61,68 @@ end
         # and also https://github.com/JuliaLang/julia/pull/48620
         needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
 
-        builder = LLVM.IRBuilder()
-        entry = LLVM.BasicBlock(llvm_f, "entry")
-        LLVM.position!(builder, entry)
-        inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
+        LLVM.@dispose builder = LLVM.IRBuilder() begin
+            entry = LLVM.BasicBlock(llvm_f, "entry")
+            LLVM.position!(builder, entry)
+            pgcstack, inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
 
-        boxed_count = if sizeof(Int) == sizeof(Int64)
-            Compiler.emit_box_int64!(builder, len)
-        else
-            Compiler.emit_box_int32!(builder, len)
+            boxed_count = if sizeof(Int) == sizeof(Int64)
+                Compiler.emit_box_int64!(builder, len)
+            else
+                Compiler.emit_box_int32!(builder, len)
+            end
+
+            tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
+
+            fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
+            obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
+
+            T_int8 = LLVM.Int8Type()
+            LLVM.memset!(builder, obj, LLVM.ConstantInt(T_int8, 0), fullsize, 0)
+
+            alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
+            alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
+
+            loop = LLVM.BasicBlock(llvm_f, "loop")
+            exit = LLVM.BasicBlock(llvm_f, "exit")
+
+            LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
+
+            LLVM.position!(builder, loop)
+            idx = LLVM.phi!(builder, ity, "onehot.idx")
+
+            push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
+            inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
+            push!(LLVM.incoming(idx), (inc, loop))
+            rval = LLVM.add!(builder, inc, lstart)
+            res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
+            if !hasNoRet
+                gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
+                LLVM.store!(builder, res, gidx)
+                Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
+            end
+
+            LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+
+
+            T_int32 = LLVM.Int32Type()
+
+            LLVM.position!(builder, exit)
+            LLVM.ret!(builder, obj)
+
+            Compiler.use_gcstack_arg!(llvm_f, pgcstack)
+            Compiler.JIT.prepare!(mod)
+
+            string(mod)
         end
-
-        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
-
-        fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
-        obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
-
-        T_int8 = LLVM.Int8Type()
-        LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
-
-        alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
-        alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
-
-        loop = LLVM.BasicBlock(llvm_f, "loop")
-        exit = LLVM.BasicBlock(llvm_f, "exit")
-
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
-
-        LLVM.position!(builder, loop)
-        idx = LLVM.phi!(builder, ity, "onehot.idx")
-
-        push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
-        inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
-        push!(LLVM.incoming(idx), (inc, loop))
-        rval = LLVM.add!(builder, inc, lstart)
-        res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
-        if !hasNoRet
-            gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
-            LLVM.store!(builder, res, gidx)
-            Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
-        end
-
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
-
-
-        T_int32 = LLVM.Int32Type()
-
-        LLVM.position!(builder, exit)
-        LLVM.ret!(builder, obj)
-	
-        Compiler.reinsert_gcmarker!(llvm_f)
-	Compiler.JIT.prepare!(mod)
-
-        string(mod)
     end
     return quote
         Base.@_inline_meta
         Base.llvmcall(
             ($ir, "f"),
             Tuple{Vararg{T}},
-            Tuple{T, Int, Int},
+            Tuple{Ptr{Cvoid}, T, Int, Int},
+            Compiler.current_pgcstack(),
             x,
             startv,
             lengthv
@@ -429,9 +433,21 @@ end
     return ((one(x),),)
 end
 
-@inline tupleconcat(x) = x
-@inline tupleconcat(x, y) = (x..., y...)
-@inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
+# Concatenate tuples into one tuple. Built as a single tuple expression, since
+# splatting recursively copies each intermediate tuple and so is quadratic in
+# the number of tuples.
+@generated function tupleconcat(xs::Tuple...)
+    elems = Expr[]
+    for (i, T) in enumerate(xs)
+        for j in 1:fieldcount(T)
+            push!(elems, :(xs[$i][$j]))
+        end
+    end
+    return quote
+        Base.@_inline_meta
+        ($(elems...),)
+    end
+end
 
 @generated function create_shadows(chunk::ChunkTy, x::X, vargs::Vararg{Any,N}) where {ChunkTy, X, N}
     args =  Union{Symbol,Expr}[:x]
@@ -459,36 +475,28 @@ end
     end
 end
 
-struct TupleArray{T,Shape,Length,N} <: AbstractArray{T,N}
+# The shape is a field rather than a type parameter: it is only known at runtime, so as a type
+# parameter every construction would build a new type dynamically.
+struct TupleArray{T, Length, N} <: AbstractArray{T, N}
     data::NTuple{Length,T}
+    shape::NTuple{N, Int}
 end
-TupleArray(data::NTuple{Length,T}, Shape) where {Length,T} =
-    TupleArray{T,Shape,Length,length(Shape)}(data)
 
 @inline Base.eltype(::TupleArray{T}) where {T} = T
 @inline Base.eltype(::Type{<:TupleArray{T}}) where {T} = T
-@inline Base.size(::TupleArray{<:Any,Shape}) where {Shape} = Shape
-@inline Base.ndims(::TupleArray{<:Any,<:Any,<:Any,N}) where {N} = N
+@inline Base.size(a::TupleArray) = a.shape
+@inline Base.ndims(::TupleArray{<:Any, <:Any, N}) where {N} = N
 
-function Base.convert(
-    ::Type{Array{T,N}},
-    X::TupleArray{T,Shape,Length,N},
-) where {T,Shape,Length,N}
-    vals = Array{T,N}(undef, Shape...)
+# The data is stored in column-major order, like an `Array`.
+Base.IndexStyle(::Type{<:TupleArray}) = IndexLinear()
+@inline Base.getindex(a::TupleArray, i::Int) = a.data[i]
+
+function Base.convert(::Type{Array{T, N}}, X::TupleArray{T, Length, N}) where {T, Length, N}
+    vals = Array{T, N}(undef, size(X)...)
     for i = 1:Length
-        @inbounds val[i] = X.data[i]
+        @inbounds vals[i] = X.data[i]
     end
     return vals
-end
-
-function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
-    start = 0
-    for i = 1:N
-        start *= size(a, N - i + 1)
-        start += (args[N-i+1] - 1)
-    end
-    start += 1
-    return a.data[start]
 end
 
 @inline function tupstack(data::Tuple{Vararg{Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}

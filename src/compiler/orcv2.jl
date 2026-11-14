@@ -13,6 +13,8 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.JuliaOJIT
+    # the dylib everything is added to, which also defines Enzyme's globals
+    jd::LLVM.JITDylib
     lctm::Union{LLVM.LazyCallThroughManager,Nothing}
     ism::Union{LLVM.IndirectStubsManager,Nothing}
 end
@@ -34,17 +36,17 @@ const tm = Ref{TargetMachine}() # for opt pipeline
 get_tm() = tm[]
 get_jit() = jit[].jit
 
-function absolute_symbol_materialization(name, ptr)
+symbol_pair_type() =
+    LLVM.version() >= v"15" ? LLVM.API.LLVMOrcCSymbolMapPair : LLVM.API.LLVMJITCSymbolMapPair
+
+function absolute_symbol_pair(name, ptr)
     address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
     flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
     symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
-    gv = if LLVM.version() >= v"15"
-        LLVM.API.LLVMOrcCSymbolMapPair(name, symbol)
-    else
-        LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
-    end
-    return LLVM.absolute_symbols(Ref(gv))
+    return symbol_pair_type()(name, symbol)
 end
+
+absolute_symbol_materialization(name, ptr) = LLVM.absolute_symbols(Ref(absolute_symbol_pair(name, ptr)))
 
 const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
 const hnd_int_map = Dict{Int, Ref{Ptr{Cvoid}}}()
@@ -93,7 +95,9 @@ function setup_globals()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    jd_main = JITDylib(lljit)
+    # On Julia >= 1.14.0-DEV.2171 this creates a new dylib, so only do it once. Before that,
+    # it is the external dylib of Julia's JIT (and the name is ignored).
+    jd_main = JITDylib(lljit, "enzyme")
 
     prefix = LLVM.get_prefix(lljit)
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
@@ -103,10 +107,10 @@ function setup_globals()
     try
         lctm = LLVM.LocalLazyCallThroughManager(triple(lljit), es)
         ism = LLVM.LocalIndirectStubsManager(triple(lljit))
-        jit[] = CompilerInstance(lljit, lctm, ism)
+        jit[] = CompilerInstance(lljit, jd_main, lctm, ism)
     catch err
         @warn "OrcV2 initialization failed with" err
-        jit[] = CompilerInstance(lljit, nothing, nothing)
+        jit[] = CompilerInstance(lljit, jd_main, nothing, nothing)
     end
 
     jd_main, lljit
@@ -120,22 +124,18 @@ function __init__()
         define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
     end
 
+    # The well-known Julia values, defined in one go.
     hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
-    for (k, v) in Compiler.JuliaGlobalNameMap
+    pairs = symbol_pair_type()[]
+    for k in keys(Compiler.JuliaGlobalNameMap)
         ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
-        LLVM.define(
-            jd_main,
-            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
-        )
+        push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
-
     for (k, v) in Compiler.JuliaEnzymeNameMap
-        ptr = Compiler.unsafe_to_ptr(v)
-        LLVM.define(
-            jd_main,
-            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
-        )
+        ptr = Compiler.unsafe_to_ptr(Compiler.unbind(v))
+        push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
+    LLVM.define(jd_main, LLVM.absolute_symbols(pairs))
 
     atexit() do
         dispose(tm[])
@@ -145,11 +145,8 @@ end
 function move_to_threadsafe(ir)
     LLVM.verify(ir) # try to catch broken modules
 
-    # So 1. serialize the module
-    buf = convert(MemoryBuffer, ir)
-
-    # 2. deserialize and wrap by a ThreadSafeModule
-    return ThreadSafeContext() do ctx
+    # So 1. serialize the module, and 2. deserialize and wrap by a ThreadSafeModule
+    return @dispose buf = convert(MemoryBuffer, ir) ctx = ThreadSafeContext() begin
         mod = parse(LLVM.Module, buf)
         ThreadSafeModule(mod)
     end
@@ -199,33 +196,6 @@ function prepare!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
-    for g in collect(globals(mod))
-        if !startswith(LLVM.name(g), "ejl_inserted\$")
-           continue
-        end
-        _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
-
-        load1 = load1 == "true"
-            initaddr = parse(UInt, initaddr)
-        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-        if load1
-           ptr = Base.unsafe_load(ptr, :unordered)
-        end
-                
-        obj = Base.unsafe_pointer_to_objref(ptr)
-	
-        # Let's try a de-bind for 1.10 lux
-        if isa(obj, Core.Binding)
-           ptr = Compiler.unsafe_to_ptr(obj.value)
-        end
-
-        ptr = reinterpret(UInt, ptr)
-        ptr = LLVM.ConstantInt(ptr)
-        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
-        ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
-        replace_uses!(g, ptr)
-        Compiler.eraseInst(mod, g)
-    end
 end
 
 function get_trampoline(job)
@@ -242,7 +212,7 @@ function get_trampoline(job)
     use_primal = mode == API.DEM_ReverseModePrimal
 
     # We could also use one dylib per job
-    jd = JITDylib(lljit)
+    jd = compiler.jd
 
     sym = String(gensym(:func))
     _sym = String(gensym(:func))
@@ -299,15 +269,18 @@ end
 function add!(mod)
     prepare!(mod)
     lljit = jit[].jit
-    jd = LLVM.JITDylib(lljit)
+    jd = jit[].jd
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
-    return nothing
+    return jd
 end
 
 function lookup(name)
-    lljit = jit[].jit
-    LLVM.lookup(lljit, JITDylib(lljit), name)
+    return LLVM.lookup(jit[].jit, jit[].jd, name)
+end
+
+function lookup(jd::JITDylib, name)
+    LLVM.lookup(jit[].jit, jd, name)
 end
 
 end # module

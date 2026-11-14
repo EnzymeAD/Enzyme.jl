@@ -1,5 +1,5 @@
 using Enzyme, OrdinaryDiffEqTsit5, StaticArrays, DiffEqBase, ForwardDiff, Test
-using OrdinaryDiffEq, SciMLBase, SciMLSensitivity, Zygote
+using SciMLBase, SciMLSensitivity, Zygote
 using LinearSolve, LinearAlgebra
 
 @testset "Direct Differentiation of Explicit ODE Solve" begin

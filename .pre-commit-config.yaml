@@ -4,3 +4,6 @@ repos:
     hooks:
       - id: runic
         args: ["--check", "--diff"]
+        additional_dependencies:
+          # Keep in sync with .github/workflows/Format.yml
+          - "Runic@1.11.1"

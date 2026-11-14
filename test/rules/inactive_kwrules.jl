@@ -6,10 +6,10 @@ using Test
 
 import .EnzymeRules: forward, augmented_primal, reverse
 
-function f_kw(out; tmp=[2.0, 0.0])
+function f_kw(out; tmp = [2.0, 0.0])
     out[1] *= tmp[1]
     tmp[2] += 1
-    nothing
+    return nothing
 end
 
 function forward(config, ::Const{typeof(f_kw)}, ::Type{<:Const}, x::Duplicated; kwargs...)
@@ -29,14 +29,14 @@ function reverse(config, ::Const{typeof(f_kw)}, ::Type{<:Const}, tape, x::Duplic
 end
 
 function g_kw(out)
-    tmp=[2.0, 0.0]
+    tmp = [2.0, 0.0]
     f_kw(out; tmp)
-    nothing
+    return nothing
 end
 
 function h_kw(out, tmp)
     f_kw(out; tmp)
-    nothing
+    return nothing
 end
 
 @testset "Forward Inactive allocated kwarg error" begin
@@ -69,7 +69,7 @@ end
     @test_throws Enzyme.Compiler.NonConstantKeywordArgException autodiff(Forward, h_kw, Duplicated(x, dx), Duplicated(tmp, dtmp))
 end
 
-Enzyme.EnzymeRules.inactive_kwarg(::typeof(f_kw), out; tmp=[2.0]) = nothing
+Enzyme.EnzymeRules.inactive_kwarg(::typeof(f_kw), out; tmp = [2.0]) = nothing
 
 @testset "Forward Inactive allocated kwarg success" begin
     x = [2.7]
@@ -112,4 +112,3 @@ end
 end
 
 end # InactiveKWRules
-

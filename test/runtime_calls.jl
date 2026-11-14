@@ -65,3 +65,96 @@ end
     @test g ≈ [3.0, 2.0]
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3858
+donotdelete_f(x) = (y = x .^ 2; Base.donotdelete(y); sum(y))
+
+@testset "jl_f_donotdelete" begin
+    x = [1.0, 2.0]
+    dx = zero(x)
+    autodiff(Reverse, donotdelete_f, Active, Duplicated(x, dx))
+    @test dx ≈ [2.0, 4.0]
+    @test autodiff(Forward, donotdelete_f, Duplicated(x, [1.0, 0.0]))[1] ≈ 2.0
+end
+
+
+# A deprecated method warns through `Base.depwarn`, which on Julia 1.13 reaches
+# `jl_eval_globalref` (via `invokelatest_gr`).
+depwarn_new_scale(x) = 2x
+Base.@deprecate depwarn_old_scale(x) depwarn_new_scale(x)
+depwarn_f(x) = depwarn_old_scale(x[1]) * x[1]
+
+@testset "Deprecated call" begin
+    if Base.JLOptions().depwarn != 2
+        x = [3.0]
+        dx = zero(x)
+        autodiff(set_runtime_activity(Reverse), depwarn_f, Active, Duplicated(x, dx))
+        @test dx ≈ [12.0]
+    end
+end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3821
+struct CFuncParams3821
+    a::Float64
+    cache::Vector{Float64}
+end
+
+function cfunc_callback_3821(
+        du::Vector{Float64},
+        u::Vector{Float64},
+        p::CFuncParams3821,
+        t::Float64,
+    )::Cvoid
+    p.cache .= p.a .* u
+    du .= .-p.cache
+    return nothing
+end
+
+mutable struct MiniFuncWrapper3821{P}
+    ptr::Ptr{Cvoid}
+    u0::Vector{Float64}
+    p::P
+end
+
+function make_wrapper_3821(u0::Vector{Float64}, p::CFuncParams3821)
+    ptr = @cfunction(
+        cfunc_callback_3821,
+        Cvoid,
+        (Ref{Vector{Float64}}, Ref{Vector{Float64}}, Ref{CFuncParams3821}, Float64)
+    )
+    return MiniFuncWrapper3821(ptr, u0, p)
+end
+
+function step_wrapper_3821!(
+        du::Vector{Float64},
+        w::MiniFuncWrapper3821{CFuncParams3821},
+    )
+    ccall(
+        w.ptr,
+        Cvoid,
+        (Ref{Vector{Float64}}, Ref{Vector{Float64}}, Ref{CFuncParams3821}, Float64),
+        du,
+        w.u0,
+        w.p,
+        0.0,
+    )
+    return nothing
+end
+
+function loss_3821(u0::Vector{Float64}, p::CFuncParams3821)
+    w = make_wrapper_3821(u0, p)
+    du = similar(u0)
+    for _ in 1:2
+        step_wrapper_3821!(du, w)
+    end
+    return sum(abs2, du)
+end
+
+@testset "Augmented cfunction wrapper with julia.get_pgcstack_or_new (#3821)" begin
+    u0 = [1.0, 2.0]
+    p = CFuncParams3821(1.5, zeros(2))
+    du0 = zero(u0)
+    dp = Ref(Enzyme.make_zero(p))
+    autodiff(Reverse, loss_3821, Active, Duplicated(u0, du0), MixedDuplicated(p, dp))
+    @test du0 ≈ [4.5, 9.0]
+    @test dp[].a ≈ 15.0
+end

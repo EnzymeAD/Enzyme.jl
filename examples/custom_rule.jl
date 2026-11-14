@@ -163,6 +163,11 @@ g(y, x) = f(y, x)^2 # function to differentiate
 @show autodiff(Forward, g, Const(y), Duplicated(x, dx)) # derivative of g w.r.t. x[1], with y annotated Const
 @show autodiff(Forward, g, Const(y), Const(x)); # derivative of g w.r.t. x[1], with x and y annotated Const
 
+# !!! warning "Runtime activity may alias an inactive argument's shadow to its primal"
+#     The `x isa Const` test above is not the whole test under [runtime activity](@ref faq-runtime-activity), where an argument that is inactive at run time is passed with its shadow aliased to its primal.
+#     A rule reading `x.dval` then reads the primal rather than a tangent and adds it to the derivative, giving a result that is plausible but wrong.
+#     As an example, for a rule that takes Julia Arrays, this can be checked using `x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)`, (see `src/internal_rules/linalg.jl`).
+
 # Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
 
@@ -285,6 +290,34 @@ double(x) = 2*x
 EnzymeRules.inactive(::typeof(double), args...) = nothing
 
 autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0
+
+# ## How rules are compiled
+
+# A rule is an ordinary Julia method. How the derivative code reaches it follows the
+# method's inlining annotation, just as for a regular call:
+#
+# - A rule declared `@inline` has its LLVM IR emitted into the differentiated function
+#   and inlined there, so the optimizer sees through it. Choose this for small rules
+#   such as the ones above, where the call itself would dominate.
+# - A rule declared `@noinline` is compiled once, natively, like any other Julia method.
+#   The differentiated function calls that compiled code directly (Julia 1.12 and newer).
+#   Choose this for large rules, and for rules with a large callee graph. Such rules are
+#   compiled once per session, not once per differentiated function that uses them.
+# - An unannotated rule follows Julia's own inlining heuristics for that method. It is
+#   inlined if Julia would inline it, and called otherwise.
+#
+# A rule that is called natively is compiled by Julia exactly as an ordinary call of it
+# would be, and shares that compiled code with ordinary callers. Inside such a rule
+# `within_autodiff()` returns `false` and `ignore_derivatives` is the identity, as in any
+# other Julia code. Inside a rule emitted into the differentiated function,
+# `within_autodiff()` returns `true`.
+#
+# Nested differentiation, for example `autodiff(Forward, x -> autodiff(Reverse, f, Active(x))...)`,
+# differentiates the inner derivative, and with it the rules the inner derivative
+# calls. A natively called rule is emitted into the outer differentiated function for
+# that purpose, so both kinds of rules can be differentiated through.
+#
+# On Julia versions before 1.12 every rule is emitted into the differentiated function.
 
 # ## Testing our rules
 

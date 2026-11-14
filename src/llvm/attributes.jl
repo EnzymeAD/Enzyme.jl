@@ -6,6 +6,8 @@ const nofreefns = Set{String}((
     "jl_genericmemory_copyto",
     "jl_get_binding_value_seqcst",
     "ijl_get_binding_value_seqcst",
+        "jl_eval_globalref",
+        "ijl_eval_globalref",
     "jl_lazy_load_and_lookup",
     "ijl_lazy_load_and_lookup",
     "utf8proc_toupper",
@@ -53,6 +55,8 @@ const nofreefns = Set{String}((
     "jl_f__apply_iterate",
     "jl_f_current_scope",
     "ijl_f_current_scope",
+        "jl_f_donotdelete",
+        "ijl_f_donotdelete",
     "ijl_field_index",
     "jl_field_index",
     "julia.call",
@@ -129,6 +133,12 @@ const nofreefns = Set{String}((
     "jl_stored_inline",
     "ijl_stored_inline",
     "jl_f_apply_type",
+        "jl_apply_tuple_type",
+        "ijl_apply_tuple_type",
+        "jl_apply_tuple_type_v",
+        "ijl_apply_tuple_type_v",
+        "jl_svec_fill",
+        "ijl_svec_fill",
     "jl_f_issubtype",
     "jl_isa",
     "ijl_isa",
@@ -180,6 +190,7 @@ const nofreefns = Set{String}((
     "jl_symbol_n",
     "ijl_symbol_n",
     "uv_os_homedir",
+        "uv_random",
     "jl_array_to_string",
     "ijl_array_to_string",
     "pcre2_jit_compile_8",
@@ -187,6 +198,7 @@ const nofreefns = Set{String}((
     "cuStreamCreate",
     "cuCtxGetCurrent",
     "cuStreamGetCaptureInfo",
+        "cuStreamIsCapturing",
     "cuStreamQuery",
     "cuStreamSynchronize",
     "cuMemGetInfo_v2",
@@ -239,10 +251,15 @@ const inactivefns = Set{String}((
     # If and when this changes, we need to change that here
     "jl_get_binding_value_seqcst",
     "ijl_get_binding_value_seqcst",
+        # Same for evaluating a `GlobalRef` (1.13 `Base.depwarn` reaches it through
+        # `invokelatest_gr`).
+        "jl_eval_globalref",
+        "ijl_eval_globalref",
 
     "utf8proc_toupper",
         "utf8proc_isupper",
         "utf8proc_islower",
+        "cuStreamIsCapturing",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",
@@ -270,6 +287,8 @@ const inactivefns = Set{String}((
     "jl_try_substrtod",
     "jl_f_current_scope",
     "ijl_f_current_scope",
+        "jl_f_donotdelete",
+        "ijl_f_donotdelete",
     "ijl_tagged_gensym",
     "jl_tagged_gensym",
     "jl_get_world_counter",
@@ -328,6 +347,12 @@ const inactivefns = Set{String}((
     "jl_stored_inline",
     "ijl_stored_inline",
     "jl_f_apply_type",
+        "jl_apply_tuple_type",
+        "ijl_apply_tuple_type",
+        "jl_apply_tuple_type_v",
+        "ijl_apply_tuple_type_v",
+        "jl_svec_fill",
+        "ijl_svec_fill",
     "jl_f_issubtype",
     "jl_isa",
     "ijl_isa",
@@ -364,6 +389,7 @@ const inactivefns = Set{String}((
     "jl_symbol_n",
     "ijl_symbol_n",
     "uv_os_homedir",
+        "uv_random",
     "jl_array_to_string",
     "ijl_array_to_string",
     "pcre2_jit_compile_8",
@@ -383,6 +409,37 @@ const inactiveglobs = Set{String}((
     "ijl_boxed_int8_cache",
     "jl_boxed_int8_cache",
     "jl_nothing",
+    "ijl_nothing",
+    "jl_true",
+    "ijl_true",
+    "jl_false",
+    "ijl_false",
+    "jl_emptytuple",
+    "ijl_emptytuple",
+    "jl_emptysvec",
+    "ijl_emptysvec",
+    "jl_an_empty_string",
+    "ijl_an_empty_string",
+    "jl_an_empty_vec_any",
+    "ijl_an_empty_vec_any",
+    "jl_an_empty_memory_any",
+    "ijl_an_empty_memory_any",
+    "jl_small_typeof",
+    "ijl_small_typeof",
+    "jl_diverror_exception",
+    "ijl_diverror_exception",
+    "jl_undefref_exception",
+    "ijl_undefref_exception",
+    "jl_interrupt_exception",
+    "ijl_interrupt_exception",
+    "jl_stackovf_exception",
+    "ijl_stackovf_exception",
+    "jl_memory_exception",
+    "ijl_memory_exception",
+    "jl_readonlymemory_exception",
+    "ijl_readonlymemory_exception",
+    "jl_precompilable_error",
+    "ijl_precompilable_error",
 ))
 
 function annotate!(mod::LLVM.Module)
@@ -419,9 +476,12 @@ function annotate!(mod::LLVM.Module)
 
     for gname in keys(JuliaGlobalNameMap)
         globs = LLVM.globals(mod)
-        if haskey(globs, gname)
-            glob = globs[gname]
-            API.SetMD(glob, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+        for cand in (gname, "i" * gname)
+            if haskey(globs, cand)
+                glob = globs[cand]
+                API.SetMD(glob, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+                API.SetMD(glob, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+            end
         end
     end
 
@@ -677,7 +737,7 @@ function annotate!(mod::LLVM.Module)
         end
     end
 
-    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
+    for fname in ("julia.get_pgcstack", "julia.get_pgcstack_or_new", "julia.ptls_states", "jl_get_ptls_states")
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
@@ -769,6 +829,7 @@ function annotate!(mod::LLVM.Module)
 
     for fname in (
         "julia.get_pgcstack",
+            "julia.get_pgcstack_or_new",
         "julia.ptls_states",
         "jl_get_ptls_states",
         "julia.safepoint",
@@ -1001,8 +1062,11 @@ function annotate!(mod::LLVM.Module)
                     if cf == fn
                         LLVM.API.LLVMAddCallSiteAttribute(
                             c,
-                            LLVM.API.LLVMAttributeReturnIndex,
-                            LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
+                            reinterpret(
+                                LLVM.API.LLVMAttributeIndex,
+                                LLVM.API.LLVMAttributeFunctionIndex,
+                            ),
+                            LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"),
                         )
                         LLVM.API.LLVMAddCallSiteAttribute(
                             c,

@@ -175,3 +175,44 @@ end
     @test dq ≈ [1.0, 1.0]
 end
 
+
+@testset "Forward constant captured by threads closure" begin
+    function thr_const_capture(x, a)
+        y = zeros(length(x))
+        Threads.@threads for i in eachindex(x)
+            y[i] = a * x[i]
+        end
+        return sum(y)
+    end
+    thr_const_local(x) = thr_const_capture(x, 2.0)
+
+    x = [1.0, 2.0, 3.0, 4.0]
+    @test 8.0 ≈ autodiff(Forward, thr_const_local, Duplicated(copy(x), ones(4)))[1]
+    @test 0.0 ≈ autodiff(Forward, thr_const_local, Duplicated(copy(x), zeros(4)))[1]
+    @test 8.0 ≈ autodiff(Forward, thr_const_capture, Duplicated(copy(x), ones(4)), Const(2.0))[1]
+    @test 10.0 ≈ autodiff(Forward, thr_const_capture, Duplicated(copy(x), zeros(4)), Duplicated(2.0, 1.0))[1]
+    res = autodiff(Forward, thr_const_local, BatchDuplicated(copy(x), (ones(4), 2 .* ones(4))))[1]
+    @test 8.0 ≈ res[1]
+    @test 16.0 ≈ res[2]
+end
+
+@testset "Threads.@spawn with active-by-value closure capture (#3226)" begin
+    function f_spawn_unused(x)
+        y = (x, 2.0)
+        t = Threads.@spawn y[1]^2
+        wait(t)
+        return y[1]
+    end
+    function f_spawn_active(x)
+        r = Ref(0.0)
+        y = (x, 2.0)
+        t = Threads.@spawn begin
+            r[] = y[1]^2 * y[2]
+            nothing
+        end
+        wait(t)
+        return r[]
+    end
+    @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_unused, Active, Active(2.0)))) ≈ 1.0
+    @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_active, Active, Active(3.0)))) ≈ 12.0
+end

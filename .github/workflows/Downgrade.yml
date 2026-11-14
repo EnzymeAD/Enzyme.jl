@@ -44,11 +44,19 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
-      - name: add EnzymeCore EnzymeTestUtils
+      # Julia 1.10's Pkg ignores `[sources]`, so the local EnzymeCore has to be
+      # dev'd explicitly. EnzymeTestUtils is deliberately not dev'd here: doing
+      # so adds it to Enzyme's `[deps]`, which pulls the *registered* Enzyme
+      # into the downgrade resolution as a dependency of EnzymeTestUtils. That
+      # is unsatisfiable whenever our Enzyme_jll floor is ahead of every
+      # registered Enzyme release (i.e. right after a jll bump). The test
+      # sandbox picks up EnzymeTestUtils from the registry instead; local
+      # changes to it are covered by the dedicated EnzymeTestUtils CI job.
+      - name: add EnzymeCore
         shell: julia --color=yes --project=. {0}
         run: |
           using Pkg
-          Pkg.develop([PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")])
+          Pkg.develop(PackageSpec(; path = "lib/EnzymeCore"))
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-downgrade-compat@v2

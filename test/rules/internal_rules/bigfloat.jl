@@ -14,9 +14,11 @@ using Test
     dbf64 = 0.27 # for testing mixed methods
     
     @test autodiff(Enzyme.Forward, BigFloat, Duplicated)[:1] isa BigFloat
+    @test autodiff(Enzyme.Forward, zero, Duplicated, Const(BigFloat))[:1] ≈ 0
 
     @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ da+db 
-    @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ da+dbf64 
+    @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ da+dbf64
+    @test autodiff(Enzyme.Forward, -, Duplicated, Duplicated(a, da))[:1] ≈ -da
     @test autodiff(Enzyme.Forward, -, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ da-db 
     @test autodiff(Enzyme.Forward, -, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ da-dbf64 
     @test autodiff(Enzyme.Forward, *, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ b*da + a*db 
@@ -28,4 +30,57 @@ using Test
     @test autodiff(Enzyme.Forward, sin, Duplicated, Duplicated(a, da))[:1] ≈ cos(a) * da
     @test autodiff(Enzyme.Forward, cos, Duplicated, Duplicated(a, da))[:1] ≈ -sin(a) * da 
     @test autodiff(Enzyme.Forward, tan, Duplicated, Duplicated(a, da))[:1] ≈ autodiff(Enzyme.Forward, tan, Duplicated, Duplicated(af64, daf64))[1]
+end
+
+@testset "BigFloat integer constructors" begin
+    a = BigFloat(1.234)
+    da = BigFloat(-0.23)
+
+    # BigFloat(::Clong) / BigFloat(::Culong) construct a constant, so the shadow is zero
+    @test autodiff(Enzyme.Forward, BigFloat, Duplicated, Const(2))[:1] ≈ 0
+    @test autodiff(Enzyme.Forward, BigFloat, Duplicated, Const(UInt(2)))[:1] ≈ 0
+
+    # ... but the primal value must still be right, and propagate through arithmetic
+    mul2(x) = x * BigFloat(2)
+    @test autodiff(Enzyme.Forward, mul2, Duplicated, Duplicated(a, da))[:1] ≈ 2 * da
+    umul2(x) = x * BigFloat(UInt(2))
+    @test autodiff(Enzyme.Forward, umul2, Duplicated, Duplicated(a, da))[:1] ≈ 2 * da
+
+    # on Windows `Clong === Int32`, so `BigFloat(::Int64)` takes the generic
+    # `Integer -> BigInt` path; `Int128` and `BigInt` exercise it on every platform
+    @test autodiff(Enzyme.Forward, BigFloat, Duplicated, Const(Int128(2)))[:1] ≈ 0
+    @test autodiff(Enzyme.Forward, BigFloat, Duplicated, Const(big(2)))[:1] ≈ 0
+    i128mul2(x) = x * BigFloat(Int128(2))
+    @test autodiff(Enzyme.Forward, i128mul2, Duplicated, Duplicated(a, da))[:1] ≈ 2 * da
+    dres = autodiff(Enzyme.Forward, i128mul2, BatchDuplicated, BatchDuplicated(a, (da, 2da)))[1]
+    @test dres[1] ≈ 2 * da
+    @test dres[2] ≈ 4 * da
+
+    # the constructor also has to keep working under a non-default precision
+    setprecision(BigFloat, 512) do
+        @test precision(BigFloat(3)) == 512
+        mul3(x) = x * BigFloat(3)
+        @test autodiff(Enzyme.Forward, mul3, Duplicated, Duplicated(a, da))[:1] ≈ 3 * da
+    end
+
+    # `eps(::Type{BigFloat})` is `nextfloat(BigFloat(1)) - BigFloat(1)`, so it goes
+    # through the integer constructor; without a rule this fails to compile.
+    # NOTE: using the result of `eps(BigFloat)` in an *active* position (e.g.
+    # `x * eps(BigFloat)`) still segfaults -- Enzyme miscompiles the BigFloat
+    # construction inside `nextfloat`/`_duplicate` when it has to differentiate it.
+    epsconst(x) = x * x + zero(eps(BigFloat))
+    @test autodiff(Enzyme.Forward, epsconst, Duplicated, Duplicated(a, da))[:1] ≈ 2 * a * da
+
+    function eps_store!(out, one_bf)
+        out[1] = eps(BigFloat)
+        out[2] = nextfloat(one_bf)
+        out[3] = prevfloat(one_bf)
+        return nothing
+    end
+    one_bf = BigFloat(1.0)
+    out = Vector{BigFloat}(undef, 3)
+    autodiff(Enzyme.Forward, Const(eps_store!), Const(out), Const(one_bf))
+    @test out[1] == eps(BigFloat)
+    @test out[2] == nextfloat(one_bf)
+    @test out[3] == prevfloat(one_bf)
 end

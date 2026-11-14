@@ -517,7 +517,32 @@ inactive_type(::Type) = false
 
 @inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
 
-@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
+@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, strong_zero(config))
+
+"""
+    set_config(mode::Mode, config::Union{FwdConfig,RevConfig})
+
+Return `mode` with every setting of `config` that applies to a nested differentiation.
+Use this in a custom rule that calls `autodiff` (or `autodiff_deferred`) itself, so that
+the nested call differentiates with the same settings as the code that invoked the rule.
+
+Currently this sets runtime activity (see [`EnzymeCore.set_runtime_activity`](@ref))
+and strong zero (see [`EnzymeCore.set_strong_zero`](@ref)). Settings that are added to
+`FwdConfig` and `RevConfig` in the future will be applied here as well.
+
+The other parameters of `config` describe what the rule has to return to its caller
+(see [`needs_primal`](@ref), [`needs_shadow`](@ref) and [`width`](@ref)), not how the
+nested call has to differentiate, so they are not applied.
+
+```julia
+function EnzymeRules.forward(config, func::Const{typeof(f)}, RT, x::Duplicated)
+    autodiff(EnzymeRules.set_config(Forward, config), Const(g), Const, x)
+    ...
+end
+```
+"""
+@inline set_config(mode::Mode, config::Union{FwdConfig, RevConfig}) =
+    EnzymeCore.set_strong_zero(EnzymeCore.set_runtime_activity(mode, config), config)
 
 include("easyrules.jl")
 

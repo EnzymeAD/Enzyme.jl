@@ -826,6 +826,15 @@ EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, 
         mode,
     )
 
+EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig) =
+    ccall(
+    (:EnzymeGradientUtilsGetAugmentedPrimalReturnUsed, libEnzyme),
+    UInt8,
+    (EnzymeGradientUtilsRef, LLVMValueRef),
+    gutils,
+    orig,
+)
+
 EnzymeGradientUtilsSubTransferHelper(
     gutils,
     mode,
@@ -1036,14 +1045,6 @@ end
 
 function FreeLogic(logic)
     ccall((:FreeEnzymeLogic, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
-end
-
-function LogicSetExternalContext(logic, ctx)
-    ccall((:EnzymeLogicSetExternalContext, libEnzyme), Cvoid, (EnzymeLogicRef, Ptr{Cvoid}), logic, ctx)
-end
-
-function LogicGetExternalContext(logic)
-    ccall((:EnzymeLogicGetExternalContext, libEnzyme), Ptr{Cvoid}, (EnzymeLogicRef,), logic)
 end
 
 function EnzymeExtractReturnInfo(ret, data, existed)
