@@ -1,14 +1,32 @@
 steps:
-  - label: "CUDA Julia v{{matrix.version}}"
+  - label: "CUDA Julia v{{matrix.version}} - GPUCompiler {{matrix.gpucompiler}}"
     matrix:
       setup:
         version:
           - "1.10"
           - "1.11"
           - "1.12"
+          - "1.13"
+        # The default resolution picks GPUCompiler 2.x, and with it CUDA 6.4 or newer
+        # (Project.toml skips 6.3), whose CUDACore requires it. "1" pins the 1.x
+        # compatibility path instead, which backs CUDA down to 6.2, the last release that
+        # resolves against GPUCompiler 1.
+        gpucompiler:
+          - "default"
+          - "1"
+      adjustments:
+        - with:
+            version: "1.11"
+            gpucompiler: "1"
+          skip: "GPU runners are scarce; 1.10 and 1.12 cover GPUCompiler 1.x"
+        - with:
+            version: "1.13"
+            gpucompiler: "1"
+          skip: "GPU runners are scarce; 1.10 and 1.12 cover GPUCompiler 1.x"
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
+      - JuliaCI/julia-coverage#v1: ~
     agents:
       queue: "cuda"
     if: build.message !~ /\[skip tests\]/
@@ -17,12 +35,22 @@ steps:
       echo "--- Setup Julia packages"
       JULIA_PKG_PRECOMPILE_AUTO="false" julia --color=yes -e '
           using Pkg
+          specs = [PackageSpec(; name="CUDA", version="6")]
+          gpucompiler = "{{matrix.gpucompiler}}"
+          if gpucompiler != "default"
+              push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
+          end
+          Pkg.add(specs)
+          # A version bound handed to `add` is not recorded anywhere, so the re-resolve
+          # `Pkg.develop` triggers below would be free to upgrade back to the default.
+          # Pin instead; `pin` only accepts direct dependencies, hence the `add` above.
+          gpucompiler == "default" || Pkg.pin("GPUCompiler")
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add(PackageSpec(; name="CUDA", version="6"))' || exit 3
+          Pkg.status()' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes test/cuda.jl
+      julia --color=yes --code-coverage=@ test/cuda.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
@@ -51,16 +79,30 @@ steps:
 #     env:
 #       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 # 
-  - label: "Metal Julia v{{matrix.version}}"
+  - label: "Metal Julia v{{matrix.version}} - GPUCompiler {{matrix.gpucompiler}}"
     matrix:
       setup:
         version:
           - "1.10"
           - "1.11"
           - "1.12"
+          - "1.13"
+        gpucompiler:
+          - "default"
+          - "1"
+      adjustments:
+        - with:
+            version: "1.11"
+            gpucompiler: "1"
+          skip: "1.10 and 1.12 cover GPUCompiler 1.x"
+        - with:
+            version: "1.13"
+            gpucompiler: "1"
+          skip: "1.10 and 1.12 cover GPUCompiler 1.x"
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
+      - JuliaCI/julia-coverage#v1: ~
     agents:
       queue: "metal"
     if: build.message !~ /\[skip tests\]/
@@ -69,11 +111,24 @@ steps:
       echo "--- Setup Julia packages"
       julia --color=yes -e '
           using Pkg
+          specs = [PackageSpec(; name="Metal")]
+          gpucompiler = "{{matrix.gpucompiler}}"
+          if gpucompiler != "default"
+              push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
+          end
+          Pkg.add(specs)
+          # A version bound handed to `add` is not recorded anywhere, so the re-resolve
+          # `Pkg.develop` triggers below would be free to upgrade back to the default.
+          # Pin instead; `pin` only accepts direct dependencies, hence the `add` above.
+          gpucompiler == "default" || Pkg.pin("GPUCompiler")
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add([PackageSpec(; name="Metal")])' || exit 3
+          Pkg.status()' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes test/metal.jl
+      julia --color=yes --code-coverage=@ test/metal.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+
+env:
+  SECRET_CODECOV_TOKEN: "qoiDkcckne4jd2/uA0uVRnr0a+lt89H/8VwHVSrbrfs1gnMVCsuoIQ7VKHbRXoqm4smR2qDQF0C2yu/n8YmTohd5lgJryuil63FCP4RTfdtW2kR6QV6wi26+JpKZ7tXvHiQFXAby8YhLg/2RAn+y0B5vR9iXvkpCkfSIFdXPUmBrY5cBs1YwONRrOsLQY8E7UkD5mdg80OKT2eaUq26QSb1ipns6yFOT361GDiAl9B1Nm1/GEN7KZN9nN37ATcHnMWnALyHmvzYa2aux3pTr3tDCAUxejGR+SqxjWjJ4RA1zZE1106a58d5PzX8v0vq0Q+NMeZCCa/65igEbt94uEw==;U2FsdGVkX1/qp2mNLgVWtBzevIGK9yhebLzdHlo4LmMkpFk4A4k9BYM9pIg8nYg6taxno0LH6Q8QfDg12EmfGQ=="

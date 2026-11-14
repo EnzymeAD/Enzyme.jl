@@ -3,6 +3,7 @@ using Test
 using ChainRules
 using ChainRulesCore
 using LinearAlgebra
+using SparseArrays
 using EnzymeTestUtils
 
 module MockModule
@@ -31,38 +32,38 @@ fdiff2(f, x::Number) = autodiff(Forward, f, Duplicated, Duplicated(x, one(x)))[1
 fdiff2(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(x, MockModule.MockType(one(x.x))))[1]
 
 @testset "import_frule" begin
-    f1(x) = 2*x
-    ChainRulesCore.@scalar_rule f1(x)  (5*one(x),)
+    f1(x) = 2 * x
+    ChainRulesCore.@scalar_rule f1(x)  (5 * one(x),)
     Enzyme.@import_frule typeof(f1) Any
-    @test fdiff(f1, 1f0) === 5f0
+    @test fdiff(f1, 1.0f0) === 5.0f0
     @test fdiff(f1, 1.0) === 5.0
-    @test fdiff2(f1, 1f0) === 5f0
+    @test fdiff2(f1, 1.0f0) === 5.0f0
     @test fdiff2(f1, 1.0) === 5.0
 
-    # specific signature    
-    f2(x) = 2*x
-    ChainRulesCore.@scalar_rule f2(x)  (5*one(x),)
+    # specific signature
+    f2(x) = 2 * x
+    ChainRulesCore.@scalar_rule f2(x)  (5 * one(x),)
     Enzyme.@import_frule typeof(f2) Float32
-    @test fdiff(f2, 1f0) === 5f0
+    @test fdiff(f2, 1.0f0) === 5.0f0
     @test fdiff(f2, 1.0) === 2.0
-    @test fdiff2(f2, 1f0) === 5f0
+    @test fdiff2(f2, 1.0f0) === 5.0f0
     @test fdiff2(f2, 1.0) === 2.0
 
     # two arguments
-    f3(x, y) = 2*x + y
-    ChainRulesCore.@scalar_rule f3(x, y)  (5*one(x), y)
-    Enzyme.@import_frule typeof(f3) Any Any    
-    @test fdiff(x -> f3(x, 1.0), 2.) === 5.0
-    @test fdiff(y -> f3(1.0, y), 2.) === 2.0
-    @test fdiff2(x -> f3(x, 1.0), 2.) === 5.0
-    @test fdiff2(y -> f3(1.0, y), 2.) === 2.0
+    f3(x, y) = 2 * x + y
+    ChainRulesCore.@scalar_rule f3(x, y)  (5 * one(x), y)
+    Enzyme.@import_frule typeof(f3) Any Any
+    @test fdiff(x -> f3(x, 1.0), 2.0) === 5.0
+    @test fdiff(y -> f3(1.0, y), 2.0) === 2.0
+    @test fdiff2(x -> f3(x, 1.0), 2.0) === 5.0
+    @test fdiff2(y -> f3(1.0, y), 2.0) === 2.0
 
     # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_frule typeof(MockModule.mock_function) MockModule.MockType
-    @test fdiff(MockModule.mock_function, MockModule.MockType(1f0)) === 3f0
+    @test fdiff(MockModule.mock_function, MockModule.MockType(1.0f0)) === 3.0f0
 
-    @testset "batch duplicated" begin 
-        x = [1.0, 2.0, 0.0]        
+    @testset "batch duplicated" begin
+        x = [1.0, 2.0, 0.0]
         Enzyme.@import_frule typeof(Base.sort) Any
 
         test_forward(Base.sort, Duplicated, (x, Duplicated))
@@ -89,8 +90,8 @@ fdiff2(f, x::MockModule.MockType) = autodiff(Forward, f, Duplicated, Duplicated(
         # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicatedNoNeed))
         test_forward(Base.sort, Const, (x, BatchDuplicated))
         # Unsupported by EnzymeTestUtils
-        # test_forward(Base.sort, Const, (x, BatchDuplicatedNoNeed))        
-        
+        # test_forward(Base.sort, Const, (x, BatchDuplicatedNoNeed))
+
         # ChainRules does not support this case (returning notangent)
         # test_forward(Base.sort, BatchDuplicated, (x, Const))
         # test_forward(Base.sort, BatchDuplicatedNoNeed, (x, Const))
@@ -101,32 +102,32 @@ rdiff(f, x::Number) = autodiff(Reverse, f, Active, Active(x))[1][1]
 rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
 
 @testset "import_rrule" begin
-    f1(x) = 2*x
-    ChainRulesCore.@scalar_rule f1(x)  (5*one(x),)
+    f1(x) = 2 * x
+    ChainRulesCore.@scalar_rule f1(x)  (5 * one(x),)
     Enzyme.@import_rrule typeof(f1) Any
-    @test rdiff(f1, 1f0) === 5f0
+    @test rdiff(f1, 1.0f0) === 5.0f0
     @test rdiff(f1, 1.0) === 5.0
 
-    # specific signature    
-    f2(x) = 2*x
-    ChainRulesCore.@scalar_rule f2(x)  (5*one(x),)
+    # specific signature
+    f2(x) = 2 * x
+    ChainRulesCore.@scalar_rule f2(x)  (5 * one(x),)
     Enzyme.@import_rrule typeof(f2) Float32
-    @test rdiff(f2, 1f0) === 5f0
+    @test rdiff(f2, 1.0f0) === 5.0f0
     @test rdiff(f2, 1.0) === 2.0
 
     # two arguments
-    f3(x, y) = 2*x + y
-    ChainRulesCore.@scalar_rule f3(x, y)  (5*one(x), y)
-    Enzyme.@import_rrule typeof(f3) Any Any    
-    @test rdiff(x -> f3(x, 1.0), 2.) === 5.0
-    @test rdiff(y -> f3(1.0, y), 2.) === 2.0
+    f3(x, y) = 2 * x + y
+    ChainRulesCore.@scalar_rule f3(x, y)  (5 * one(x), y)
+    Enzyme.@import_rrule typeof(f3) Any Any
+    @test rdiff(x -> f3(x, 1.0), 2.0) === 5.0
+    @test rdiff(y -> f3(1.0, y), 2.0) === 2.0
 
     # external module (checks correct type escaping, PR #1446)
     Enzyme.@import_rrule typeof(MockModule.mock_function) MockModule.MockType
-    @test rdiff(MockModule.mock_function, MockModule.MockType(1f0)) === MockModule.MockType(2f0)
+    @test rdiff(MockModule.mock_function, MockModule.MockType(1.0f0)) === MockModule.MockType(2.0f0)
 
-    @testset "batch duplicated" begin 
-        x = [1.0, 2.0, 0.0]        
+    @testset "batch duplicated" begin
+        x = [1.0, 2.0, 0.0]
         Enzyme.@import_rrule typeof(Base.sort) Any
 
         test_reverse(Base.sort, Duplicated, (x, Duplicated))
@@ -153,17 +154,92 @@ rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
         # test_reverse(Base.sort, BatchDuplicatedNoNeed, (x, BatchDuplicatedNoNeed))
         test_reverse(Base.sort, Const, (x, BatchDuplicated))
         # Unsupported by EnzymeTestUtils
-        # test_reverse(Base.sort, Const, (x, BatchDuplicatedNoNeed))        
-        
+        # test_reverse(Base.sort, Const, (x, BatchDuplicatedNoNeed))
+
         # ChainRules does not support this case (returning notangent)
         # test_reverse(Base.sort, BatchDuplicated, (x, Const))
         # test_reverse(Base.sort, BatchDuplicatedNoNeed, (x, Const))
     end
+
+    @testset "unread GC-tracked struct field read by rrule" begin
+        @test Enzyme.EnzymeRules.has_readonly_rule(MockModule.mock_function, MockModule.MockType(1.0f0))
+        @test !Enzyme.EnzymeRules.has_attribute_preserving_rule_from_sig(Tuple{typeof(MockModule.mock_function), MockModule.MockType})
+    end
 end
 
+struct RRulePartialArg
+    mode::Int
+    weights::Vector{Float64}
+end
 
+const rrule_partial_calls = Ref(0)
 
+@noinline rrule_partial(p::RRulePartialArg, u::Vector{Float64}) = p.mode .* u
 
+function ChainRulesCore.rrule(::typeof(rrule_partial), p::RRulePartialArg, u::Vector{Float64})
+    rrule_partial_calls[] += 1
+    y = p.weights .* (p.mode .* u)
+    function rrule_partial_pullback(dy)
+        dy_unthunked = ChainRulesCore.unthunk(dy)
+        return NoTangent(), NoTangent(), dy_unthunked .* (p.mode .* p.weights)
+    end
+    return y, rrule_partial_pullback
+end
 
+Enzyme.@import_rrule typeof(rrule_partial) RRulePartialArg Vector{Float64}
 
+rrule_partial_loss(u) = sum(rrule_partial(RRulePartialArg(2, [3.0, 5.0]), u))
+function rrule_partial_const_call(u)
+    _ = rrule_partial(RRulePartialArg(2, [3.0, 5.0]), [1.0, 1.0])
+    return sum(u)
+end
 
+@testset "import_rrule preserves unread GC-tracked struct fields" begin
+    @test Enzyme.gradient(Reverse, rrule_partial_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), rrule_partial_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+
+    rrule_partial_calls[] = 0
+    @test Enzyme.gradient(Reverse, rrule_partial_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test rrule_partial_calls[] == 0
+end
+
+mysolve3601(A::SparseMatrixCSC, F::AbstractVector) = A \ F
+
+function ChainRulesCore.rrule(::typeof(mysolve3601), A::SparseMatrixCSC, F::AbstractVector)
+    fact = lu(A)
+    u = fact \ F
+    function pb(ȳ)
+        λ = fact' \ unthunk(ȳ)
+        Ā = similar(A)
+        rows = rowvals(A)
+        Āv = nonzeros(Ā)
+        for j in axes(A, 2), k in nzrange(A, j)
+            Āv[k] = -λ[rows[k]] * u[j]
+        end
+        return (NoTangent(), Ā, λ)
+    end
+    return u, pb
+end
+
+Enzyme.@import_rrule(typeof(mysolve3601), SparseMatrixCSC, AbstractVector)
+
+loss3601(Ain, Fin) = sum(abs2, mysolve3601(Ain, Fin))
+
+@testset "import_rrule sparse cotangent preserves structure (#3601)" begin
+    A = sparse(Diagonal([2.0, 2.0, 2.0]))
+    F = [1.0, 0.0, 3.0]
+    Ap = copy(A)
+    dA = Enzyme.make_zero(Ap)
+    @test dA.rowval === Ap.rowval
+    Enzyme.autodiff(
+        set_runtime_activity(Reverse),
+        Const(loss3601),
+        Active,
+        Duplicated(Ap, dA),
+        Const(F),
+    )
+    @test (length(dA.nzval), length(dA.rowval), dA.colptr[end] - 1) == (3, 3, 3)
+    @test (length(Ap.nzval), length(Ap.rowval), Ap.colptr[end] - 1) == (3, 3, 3)
+    @test Matrix(Ap) == Matrix(A)
+    @test dA.nzval ≈ [-0.25, 0.0, -2.25]
+end

@@ -5,7 +5,7 @@ using Test
     # 1. Primitive Float64
     f_float(x) = make_zero(x) + x
     @test Enzyme.autodiff(Forward, f_float, Duplicated(2.0, 3.0)) == (3.0,)
-    
+
     res_float = Enzyme.autodiff(Forward, f_float, BatchDuplicated, BatchDuplicated(2.0, (3.0, 5.0)))[1]
     @test res_float[1] ≈ 3.0
     @test res_float[2] ≈ 5.0
@@ -13,7 +13,7 @@ using Test
     # 2. Vector{Float64}
     f_vector(x) = sum(make_zero(x)) + sum(x)
     @test Enzyme.autodiff(Forward, f_vector, Duplicated([1.0, 2.0], [10.0, 20.0])) == (30.0,)
-    
+
     res_vector = Enzyme.autodiff(Forward, f_vector, BatchDuplicated, BatchDuplicated([1.0, 2.0], ([10.0, 20.0], [100.0, 200.0])))[1]
     @test res_vector[1] ≈ 30.0
     @test res_vector[2] ≈ 300.0
@@ -61,5 +61,5 @@ using Test
         end
         @test Enzyme.gradient(Enzyme.Reverse, Const(f_rev), [1.0, 2.0])[1] ≈ [1.0, 1.0]
     end
-    
+
 end

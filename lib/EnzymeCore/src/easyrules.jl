@@ -1,13 +1,40 @@
 ############################################################################################
 ### @easy_rule
 
-function has_easy_rule end
+"""
+    has_attribute_preserving_rule(func::typeof(f), args...; kwargs...)
 
-function has_easy_rule_from_sig(@nospecialize(TT);
+Mark a function with a custom rule as accessing no more of its arguments in the custom rule
+than its primal body accesses (enabling full parameter attribute inference from the body).
+Automatically defined by [`EnzymeRules.@easy_rule`](@ref).
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function has_attribute_preserving_rule end
+
+function has_attribute_preserving_rule_from_sig(@nospecialize(TT);
                               world::UInt=Base.get_world_counter(),
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
-    return isapplicable(has_easy_rule, TT; world, method_table, caller)
+    return isapplicable(has_attribute_preserving_rule, TT; world, method_table, caller)
+end
+
+"""
+    has_readonly_rule(func::typeof(f), args...; kwargs...)
+
+Mark a function with a custom rule as only reading its arguments locally (or throwing) and
+allowing constant calls to bypass the rule. Automatically defined by
+[`EnzymeRules.@easy_rule`](@ref).
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function has_readonly_rule end
+
+function has_readonly_rule_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+    return isapplicable(has_readonly_rule, TT; world, method_table, caller)
 end
 
 
@@ -438,8 +465,14 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                     push!(caches, nothing)
                     continue
                 end
-                sym = Symbol("cache_$(sym_name)")
-                used = nothing
+                # Partials refer to the unwrapped value (`x`), not the annotation (`ann_x`).
+                val_name = Symbol(sym_name[(length("ann_") + 1):end])
+                VT = eltype(inp_types[inum])
+                if VT <: AbstractFloat || VT <: Integer
+                    push!(caches, nothing)
+                    continue
+                end
+                used = false
                 for (o, tosum) in enumerate(tosum0)
                     for (i, sname, p) in tosum
                         if actives[i] isa Nothing
@@ -448,28 +481,16 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                         if inp_types[i] <: Const
                             continue
                         end
-                        if !uses_symbol(p, Symbol(sym_name))
-                            continue
-                        end
-
-                        expr = :(!($name <: AbstractFloat || $name <: Integer))
-
-                        if used == nothing
-                            used = expr
-                        else
-                            used = Expr(:|, used, expr)
+                        if uses_symbol(p, val_name)
+                            used = true
                         end
                     end
                 end
 
-                if used == nothing
-                    push!(caches, nothing)
+                if used
+                    push!(caches, Expr(:call, Base.copy, val_name))
                 else
-                    push!(caches, Expr(:if,
-                        used,
-                        Expr(:call, Base.copy, Symbol(sym_name)),
-                        nothing
-                    ))
+                    push!(caches, nothing)
                 end
             end
             if needs_shadow(config)
@@ -558,8 +579,8 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 #end
             elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
                 push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
-            else
-                push!(genexprs, Expr(Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
+            elseif !(RTA <: Type{<:EnzymeCore.Const})
+                push!(genexprs, Expr(:call, Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
             end
 
             actives = Union{Nothing, Expr}[$(actives...)]
@@ -571,7 +592,8 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             insyms = Matrix{Symbol}(undef, N, W)
 
             for (inum, sym_name) in enumerate(inp_names)
-                if (RTA <: EnzymeCore.Const)
+                # A constant return propagates no derivative into the inputs.
+                if RTA <: EnzymeCore.Const || RTA <: Type{<:EnzymeCore.Const}
                     push!(results, nothing)
                     continue
                 end
@@ -764,7 +786,8 @@ macro easy_rule(call, maybe_setup, partials...)
 
     # Final return: building the expression to insert in the place of this macro
     quote
-        EnzymeRules.has_easy_rule(::Core.Typeof($f), $(normal_inputs...)) = true
+        EnzymeRules.has_readonly_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
+        EnzymeRules.has_attribute_preserving_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
         $(frule_expr)
         $(rrule_expr)
     end

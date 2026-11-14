@@ -8,8 +8,8 @@ using Test
 f(x) = x^2
 
 function f_ip(x)
-   x[1] *= x[1]
-   return nothing
+    x[1] *= x[1]
+    return nothing
 end
 
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
@@ -25,9 +25,9 @@ end
 
 function reverse(config::RevConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
     if needs_primal(config)
-        return (10+2*x.val*dret.val,)
+        return (10 + 2 * x.val * dret.val,)
     else
-        return (100+2*x.val*dret.val,)
+        return (100 + 2 * x.val * dret.val,)
     end
 end
 
@@ -50,13 +50,13 @@ end
 
 @testset "Custom Reverse Rules" begin
     @test Enzyme.autodiff(Enzyme.Reverse, f, Active(2.0))[1][1] ≈ 104.0
-    @test Enzyme.autodiff(Enzyme.Reverse, x->f(x)^2, Active(2.0))[1][1] ≈ 42.0
+    @test Enzyme.autodiff(Enzyme.Reverse, x -> f(x)^2, Active(2.0))[1][1] ≈ 42.0
 
     x = [2.0]
     dx = [1.0]
-    
+
     Enzyme.autodiff(Enzyme.Reverse, f_ip, Duplicated(x, dx))
-    
+
     @test x ≈ [4.0]
     @test dx ≈ [102.0]
 end
@@ -70,12 +70,12 @@ function augmented_primal(config::RevConfigWidth{2}, func::Const{typeof(f)}, ::T
 end
 
 function reverse(config::RevConfigWidth{2}, ::Const{typeof(f)}, dret::NTuple{2, Active}, tape, x::Active)
-    return ((10+2*x.val*dret[1].val,100+2*x.val*dret[2].val,),)
+    return ((10 + 2 * x.val * dret[1].val, 100 + 2 * x.val * dret[2].val),)
 end
 
 function fip_2(out, in)
     out[] = f(in[])
-    nothing
+    return nothing
 end
 
 @testset "Batch ActiveReverse Rules" begin
@@ -87,19 +87,19 @@ end
 end
 
 function alloc_sq(x)
-    return Ref(x*x)
+    return Ref(x * x)
 end
 
 function h(x)
-    alloc_sq(x)[]
+    return alloc_sq(x)[]
 end
 
 function h2(x)
     y = alloc_sq(x)[]
-    y * y
+    return y * y
 end
 
-function augmented_primal(config, func::Const{typeof(alloc_sq)}, ::Type{<:Annotation}, x::Active{T}) where T
+function augmented_primal(config, func::Const{typeof(alloc_sq)}, ::Type{<:Annotation}, x::Active{T}) where {T}
     primal = nothing
     # primal
     if needs_primal(config)
@@ -113,22 +113,22 @@ function augmented_primal(config, func::Const{typeof(alloc_sq)}, ::Type{<:Annota
     if needs_shadow(config)
         shadow = shadref
     end
-    
+
     return AugmentedReturn(primal, shadow, shadref)
 end
 
 function reverse(config, ::Const{typeof(alloc_sq)}, ::Type{<:Annotation}, tape, x::Active)
     if needs_primal(config)
-        return (10*2*x.val*tape[],)
+        return (10 * 2 * x.val * tape[],)
     else
-        return (1000*2*x.val*tape[],)
+        return (1000 * 2 * x.val * tape[],)
     end
 end
 
 @testset "Shadow" begin
     @test Enzyme.autodiff(Reverse, h, Active(3.0)) == ((6000.0,),)
-    @test Enzyme.autodiff(ReverseWithPrimal, h, Active(3.0))  == ((60.0,), 9.0)
-    @test Enzyme.autodiff(Reverse, h2, Active(3.0))  == ((1080.0,),)
+    @test Enzyme.autodiff(ReverseWithPrimal, h, Active(3.0)) == ((60.0,), 9.0)
+    @test Enzyme.autodiff(Reverse, h2, Active(3.0)) == ((1080.0,),)
 end
 
 q(x) = x^2
@@ -145,9 +145,9 @@ function reverse(config::RevConfigWidth{1}, ::Const{typeof(q)}, dret::Active, ta
     @test tape[1][] == 2.0
     @test tape[2][] == 3.4
     if needs_primal(config)
-        return (10+2*x.val*dret.val,)
+        return (10 + 2 * x.val * dret.val,)
     else
-        return (100+2*x.val*dret.val,)
+        return (100 + 2 * x.val * dret.val,)
     end
 end
 
@@ -158,11 +158,11 @@ end
 foo(x::Complex) = 2x
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfigWidth{1},
-    func::Const{typeof(foo)},
-    ::Type{<:Active},
-    x
-)
+        config::EnzymeRules.RevConfigWidth{1},
+        func::Const{typeof(foo)},
+        ::Type{<:Active},
+        x
+    )
     r = func.val(x.val)
     if EnzymeRules.needs_primal(config)
         primal = func.val(x.val)
@@ -179,35 +179,35 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfigWidth{1},
-    func::Const{typeof(foo)},
-    dret,
-    tape,
-    y
-)
-    return (dret.val+13.0im,)
+        config::EnzymeRules.RevConfigWidth{1},
+        func::Const{typeof(foo)},
+        dret,
+        tape,
+        y
+    )
+    return (dret.val + 13.0im,)
 end
 
 @testset "Complex values" begin
     fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(foo)}, Active, Active{ComplexF64})
-    z = 1.0+3im
+    z = 1.0 + 3im
     grad_u = rev(Const(foo), Active(z), 1.0 + 0.0im, fwd(Const(foo), Active(z))[1])[1][1]
-    @test grad_u ≈ 1.0+13.0im
+    @test grad_u ≈ 1.0 + 13.0im
 end
 
 _scalar_dot(x, y) = conj(x) * y
 
-function _dot(X::StridedArray{T}, Y::StridedArray{T}) where {T<:Union{Real,Complex}}
+function _dot(X::StridedArray{T}, Y::StridedArray{T}) where {T <: Union{Real, Complex}}
     return mapreduce(_scalar_dot, +, X, Y)
 end
 
 function augmented_primal(
-    config::RevConfigWidth{1},
-    func::Const{typeof(_dot)},
-    ::Type{<:Union{Const,Active}},
-    X::Duplicated{<:StridedArray{T}},
-    Y::Duplicated{<:StridedArray{T}},
-) where {T<:Union{Real,Complex}}
+        config::RevConfigWidth{1},
+        func::Const{typeof(_dot)},
+        ::Type{<:Union{Const, Active}},
+        X::Duplicated{<:StridedArray{T}},
+        Y::Duplicated{<:StridedArray{T}},
+    ) where {T <: Union{Real, Complex}}
     r = func.val(X.val, Y.val)
     primal = needs_primal(config) ? r : nothing
     shadow = needs_shadow(config) ? zero(r) : nothing
@@ -216,13 +216,13 @@ function augmented_primal(
 end
 
 function reverse(
-    ::RevConfigWidth{1},
-    ::Const{typeof(_dot)},
-    dret::Union{Active,Type{<:Const}},
-    tape,
-    X::Duplicated{<:StridedArray{T}},
-    Y::Duplicated{<:StridedArray{T}},
-) where {T<:Union{Real,Complex}}
+        ::RevConfigWidth{1},
+        ::Const{typeof(_dot)},
+        dret::Union{Active, Type{<:Const}},
+        tape,
+        X::Duplicated{<:StridedArray{T}},
+        Y::Duplicated{<:StridedArray{T}},
+    ) where {T <: Union{Real, Complex}}
     if !(dret isa Type{<:Const})
         Xtape, Ytape = tape
         X.dval .+= dret.val .* Ytape
@@ -235,8 +235,8 @@ end
 @testset "Correct primal computation for custom `dot`" begin
     @testset for T in (Float32, Float64, ComplexF32, ComplexF64)
         n = 10
-        x, y = randn(T, n), randn(T, n);
-        ∂x, ∂y = map(zero, (x, y));
+        x, y = randn(T, n), randn(T, n)
+        ∂x, ∂y = map(zero, (x, y))
         val_exp = _dot(x, y)
         _, val = autodiff(
             ReverseWithPrimal, _dot, Const, Duplicated(x, ∂x), Duplicated(y, ∂y),
@@ -245,9 +245,9 @@ end
     end
 end
 
-function cmyfunc!(y, x) 
+function cmyfunc!(y, x)
     y .= x
-    nothing
+    return nothing
 end
 
 function cprimal(x0, y0)
@@ -260,17 +260,21 @@ function cprimal(x0, y0)
     return @inbounds x[1]
 end
 
-function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
-    y::Duplicated, x::Duplicated)
+function EnzymeRules.augmented_primal(
+        config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
+        y::Duplicated, x::Duplicated
+    )
     cmyfunc!(y.val, x.val)
     tape = (copy(x.val), 3)
     return AugmentedReturn(nothing, nothing, tape)
 end
 
 const seen = Set()
-function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
-    y::Duplicated,  x::Duplicated)
-    xval = tape[1] 
+function EnzymeRules.reverse(
+        config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
+        y::Duplicated, x::Duplicated
+    )
+    xval = tape[1]
     p = pointer(xval)
     @assert !in(p, seen)
     push!(seen, p)
@@ -286,11 +290,13 @@ end
 end
 
 function remultr(arg)
-    arg * arg
+    return arg * arg
 end
 
-function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(remultr)},
-    ::Type{<:Active}, args::Vararg{Active,N}) where {N}
+function EnzymeRules.augmented_primal(
+        config::RevConfigWidth{1}, func::Const{typeof(remultr)},
+        ::Type{<:Active}, args::Vararg{Active, N}
+    ) where {N}
     primal = if EnzymeRules.needs_primal(config)
         func.val(args[1].val)
     else
@@ -299,8 +305,10 @@ function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typ
     return AugmentedReturn(primal, nothing, nothing)
 end
 
-function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(remultr)},
-    dret::Active, tape, args::Vararg{Active,N}) where {N}
+function EnzymeRules.reverse(
+        config::RevConfigWidth{1}, func::Const{typeof(remultr)},
+        dret::Active, tape, args::Vararg{Active, N}
+    ) where {N}
 
     dargs = ntuple(Val(N)) do i
         7 * args[1].val * dret.val
@@ -325,7 +333,7 @@ end
 
     autodiff(Reverse, plaquette_sum, Active, Duplicated(U, dU))
 
-    @test dU[1] ≈ 7 * ( 3.0 + 4.0im )
+    @test dU[1] ≈ 7 * (3.0 + 4.0im)
 end
 
 struct Closure
@@ -339,8 +347,10 @@ function (cl::Closure)(x)
 end
 
 
-function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{Closure},
-    ::Type{<:Active}, args::Vararg{Active,N}) where {N}
+function EnzymeRules.augmented_primal(
+        config::RevConfigWidth{1}, func::Const{Closure},
+        ::Type{<:Active}, args::Vararg{Active, N}
+    ) where {N}
     vec = copy(func.val.v)
     pval = func.val(args[1].val)
     primal = if EnzymeRules.needs_primal(config)
@@ -351,8 +361,10 @@ function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{Clo
     return AugmentedReturn(primal, nothing, vec)
 end
 
-function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{Closure},
-    dret::Active, tape, args::Vararg{Active,N}) where {N}
+function EnzymeRules.reverse(
+        config::RevConfigWidth{1}, func::Const{Closure},
+        dret::Active, tape, args::Vararg{Active, N}
+    ) where {N}
     dargs = ntuple(Val(N)) do i
         7 * args[1].val * dret.val + tape[1] * 1000
     end
@@ -368,26 +380,26 @@ end
 
 
 function times2(wt_y)
-    return wt_y*2
+    return wt_y * 2
 end
 function EnzymeRules.augmented_primal(config, ::Const{typeof(times2)}, FA, x)
-    return EnzymeRules.AugmentedReturn(2*x.val, nothing, nothing)
+    return EnzymeRules.AugmentedReturn(2 * x.val, nothing, nothing)
 end
 function EnzymeRules.reverse(config, ::Const{typeof(times2)}, FA, tape, arg)
-    return (46.7*FA.val,)
+    return (46.7 * FA.val,)
 end
 
 
 function times2_ar(x)
-	n = length(x)
+    n = length(x)
     res = Vector{Float64}(undef, n)
-	i = 1
-	while true
+    i = 1
+    while true
         @inbounds res[i] = @inbounds times2(@inbounds x[i])
-		if i == n
-			break
-		end
-		i+=1
+        if i == n
+            break
+        end
+        i += 1
     end
     return res[3]::Float64
 end
@@ -396,7 +408,7 @@ end
     vals = [2.7, 5.6, 7.8, 12.2]
     dvals = zero(vals)
     Enzyme.autodiff(Reverse, times2_ar, Duplicated(vals, dvals))
-    @test dvals ≈ [0., 0., 46.7, 0.]
+    @test dvals ≈ [0.0, 0.0, 46.7, 0.0]
 end
 
 unstabletape(x) = x^2
@@ -405,7 +417,7 @@ function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(unstable
     tape = if x.val < 3
         400
     else
-        (x.val +7 ) * 10
+        (x.val + 7) * 10
     end
     if needs_primal(config)
         return AugmentedReturn{eltype(x), Nothing, typeof(tape)}(func.val(x.val), nothing, tape)
@@ -414,7 +426,7 @@ function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(unstable
     end
 end
 
-function reverse(config::RevConfigWidth{1}, ::Const{typeof(unstabletape)}, dret, tape, x::Active{T}) where T
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(unstabletape)}, dret, tape, x::Active{T}) where {T}
     return (T(tape)::T,)
 end
 
@@ -458,12 +470,12 @@ end
 
 # Define custom rule to trigger rule wrapper processing
 function EnzymeRules.augmented_primal(config, func::Const{typeof(rule_func_const)}, ::Type{<:Annotation}, z::Active, args...)
-    primal = EnzymeRules.needs_primal(config) ? rule_func_const(z.val, map(x->x.val, args)...) : nothing
+    primal = EnzymeRules.needs_primal(config) ? rule_func_const(z.val, map(x -> x.val, args)...) : nothing
     return AugmentedReturn(primal, nothing, nothing)
 end
 
 function EnzymeRules.reverse(config, func::Const{typeof(rule_func_const)}, dret::Active, tape, z::Active, args...)
-    return (dret.val, ntuple(_->nothing, Val(length(args)))...)
+    return (dret.val, ntuple(_ -> nothing, Val(length(args)))...)
 end
 
 function loss_inplace(p)
@@ -482,7 +494,7 @@ end
 end
 # Define a function on Tuples
 function my_nonlin(t::Tuple)
-    return t[1]*t[2] + t[3]*t[4]
+    return t[1] * t[2] + t[3] * t[4]
 end
 
 # Define PROPER custom rule for it
@@ -502,8 +514,8 @@ end
 function f_loop(X, N)
     total = 0.0
     for k in 1:N
-        idx = (k-1)*4
-        t = (X[idx+1], X[idx+2], X[idx+3], X[idx+4])
+        idx = (k - 1) * 4
+        t = (X[idx + 1], X[idx + 2], X[idx + 3], X[idx + 4])
         total += my_nonlin(t)
     end
     return total
@@ -514,9 +526,9 @@ end
     N = 2
     grad_expected = [2.0, 1.0, 4.0, 3.0, 6.0, 5.0, 8.0, 7.0]
     dX = zeros(size(X))
-    
+
     Enzyme.autodiff(Reverse, f_loop, Active, Duplicated(X, dX), Const(N))
-    
+
     @test dX ≈ grad_expected
 end
 
@@ -569,6 +581,272 @@ uninferred_outer(p) = (y = uninferred_fun(p); y[1]^2 + y[2]^2)
     Enzyme.autodiff(Enzyme.Reverse, uninferred_outer, Enzyme.Active, Enzyme.BatchDuplicated(p, (d1, d2)))
     @test d1 ≈ [2.0, 4.0]
     @test d2 ≈ [2.0, 4.0]
+end
+
+# A rule reached through a dynamic call runs in split mode, where the augmented
+# forward and the reverse pass are separate compilations. They must agree on
+# the rule's config and return activity, which select the rule method and the
+# tape layout. Here only the augmented function returns the primal.
+struct SplitModeArg
+    x::Float64
+    v::Vector{Float64}
+end
+
+@noinline split_scale(s::SplitModeArg) = s.v .* s.x
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_scale)},
+        RTA::Type{<:Duplicated}, s
+    )
+    res = split_scale(s.val)
+    dres = zero(res)
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(res, dres, dres)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_scale)},
+        ::Type{<:Duplicated}, dres, s
+    )
+    s.dval[].v .+= dres .* s.val.x
+    return (nothing,)
+end
+
+split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeArg(2.0, v)))
+
+@testset "Custom rule in split mode through a dynamic call" begin
+    @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+end
+
+# A hand-written rule whose primal only reads inline fields of a struct argument
+# while the custom rule also inspects its GC-tracked fields (as in
+# `DiffEqBase.solve_up`) declares `has_readonly_rule` rather than
+# `has_attribute_preserving_rule`, keeping `enzyme_LocalReadOnlyOrThrow` and
+# constant-call skipping without allowing DSE/readnone inference to drop unread
+# GC-tracked struct fields.
+struct ReadonlyRuleArg
+    mode::Int
+    weights::Vector{Float64}
+end
+
+const readonly_rule_calls = Ref(0)
+
+@noinline function readonly_rule_partial(p::ReadonlyRuleArg, u::Vector{Float64})
+    return p.mode .* u
+end
+
+EnzymeRules.has_readonly_rule(::typeof(readonly_rule_partial), ::ReadonlyRuleArg, ::Vector{Float64}) = nothing
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(readonly_rule_partial)},
+        ::Type{RT}, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    ) where {RT}
+    readonly_rule_calls[] += 1
+    res = p.val.weights .* (p.val.mode .* u.val)
+    dp = p isa Const ? zero(res) : (p.dval.weights .* (p.val.mode .* u.val))
+    du = u isa Const ? zero(res) : p.val.weights .* (p.val.mode .* u.dval)
+    dres = dp .+ du
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.needs_shadow(config) ? Duplicated(res, dres) : res
+    else
+        return EnzymeRules.needs_shadow(config) ? dres : nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(readonly_rule_partial)},
+        RTA::Type{<:Duplicated}, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    )
+    readonly_rule_calls[] += 1
+    res = p.val.weights .* (p.val.mode .* u.val)
+    dres = EnzymeRules.needs_shadow(config) ? zero(res) : nothing
+    tape = (dres, copy(p.val.weights), copy(u.val))
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(
+        EnzymeRules.needs_primal(config) ? res : nothing, dres, tape
+    )
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(readonly_rule_partial)},
+        ::Type{<:Duplicated}, tape, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    )
+    dres, w, uval = tape
+    rta = EnzymeRules.runtime_activity(config)
+    if p isa Duplicated && !(rta && p.dval.weights === p.val.weights)
+        p.dval.weights .+= dres .* (p.val.mode .* uval)
+    end
+    if !(u isa Const) && !(rta && u.dval === u.val)
+        u.dval .+= dres .* (p.val.mode .* w)
+    end
+    fill!(dres, 0.0)
+    return (nothing, nothing)
+end
+
+readonly_rule_const_prob_loss(u) = sum(readonly_rule_partial(ReadonlyRuleArg(2, [3.0, 5.0]), u))
+readonly_rule_active_prob_loss(w, u) = sum(readonly_rule_partial(ReadonlyRuleArg(2, w), u))
+readonly_rule_split_loss(u) = sum(Base.inferencebarrier((p, x) -> readonly_rule_partial(p, x))(ReadonlyRuleArg(2, [3.0, 5.0]), u))
+function readonly_rule_const_call(u)
+    _ = readonly_rule_partial(ReadonlyRuleArg(2, [3.0, 5.0]), [1.0, 1.0])
+    return sum(u)
+end
+
+@testset "has_readonly_rule preserves unread GC-tracked struct fields" begin
+    @test EnzymeRules.has_readonly_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
+    @test !EnzymeRules.has_attribute_preserving_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
+    ir = sprint(
+        io -> Enzyme.Compiler.enzyme_code_llvm(
+            io, readonly_rule_const_prob_loss, Active, Tuple{Duplicated{Vector{Float64}}};
+            run_enzyme = false, raw = true, dump_module = true
+        )
+    )
+    @test occursin("enzyme_ReadOnlyOrThrow", ir) || occursin("enzyme_LocalReadOnlyOrThrow", ir)
+    @test !occursin("enzyme_custom_full_attributes", ir)
+
+    @test Enzyme.gradient(Reverse, readonly_rule_const_prob_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), readonly_rule_const_prob_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), readonly_rule_split_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+
+    w = [3.0, 5.0]
+    dw = zeros(2)
+    u = [4.0, 7.0]
+    du = zeros(2)
+    Enzyme.autodiff(
+        Reverse, readonly_rule_active_prob_loss, Active,
+        Duplicated(w, dw), Duplicated(u, du)
+    )
+    @test dw ≈ [8.0, 14.0]
+    @test du ≈ [6.0, 10.0]
+
+    fill!(dw, 0.0)
+    fill!(du, 0.0)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse), readonly_rule_active_prob_loss, Active,
+        Duplicated(w, dw), Duplicated(u, du)
+    )
+    @test dw ≈ [8.0, 14.0]
+    @test du ≈ [6.0, 10.0]
+
+    fwd_d = Enzyme.autodiff(
+        Forward, readonly_rule_active_prob_loss, Duplicated,
+        Duplicated([3.0, 5.0], [1.0, -1.0]), Duplicated([4.0, 7.0], [0.5, 2.0])
+    )
+    @test fwd_d[1] ≈ 17.0
+
+    # Constant calls still bypass a `has_readonly_rule` custom rule in both Reverse and Forward.
+    readonly_rule_calls[] = 0
+    @test Enzyme.gradient(Reverse, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test readonly_rule_calls[] == 0
+    @test Enzyme.gradient(Forward, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test readonly_rule_calls[] == 0
+end
+
+function rrule_only_op!(y::Vector{Float64}, w::Vector{Float64}, x::Vector{Float64}, save_x::Bool)
+    @inbounds for i in eachindex(y, w, x)
+        y[i] = tanh(w[i] * x[i])
+    end
+    return nothing
+end
+
+function augmented_primal(
+        cfg::RevConfigWidth{1},
+        ::Const{typeof(rrule_only_op!)},
+        ::Type{Const{Nothing}},
+        y::Annotation{Vector{Float64}},
+        w::Annotation{Vector{Float64}},
+        x::Annotation{Vector{Float64}},
+        save_x::Const{Bool},
+    )
+    rrule_only_op!(y.val, w.val, x.val, save_x.val)
+    cache = save_x.val ? (2, copy(x.val)) : (1, nothing)
+    return AugmentedReturn(nothing, nothing, cache)
+end
+
+function reverse(
+        cfg::RevConfigWidth{1},
+        ::Const{typeof(rrule_only_op!)},
+        ::Type{Const{Nothing}},
+        cache,
+        y::Annotation{Vector{Float64}},
+        w::Annotation{Vector{Float64}},
+        x::Annotation{Vector{Float64}},
+        ::Const{Bool},
+    )
+    if !(y isa Const)
+        dy = y.dval
+        @inbounds for i in eachindex(dy)
+            sech2 = 1.0 - y.val[i]^2
+            dl = dy[i] * sech2
+            if !(w isa Const) && w.dval !== w.val
+                w.dval[i] += dl * x.val[i]
+            end
+            if !(x isa Const) && x.dval !== x.val
+                x.dval[i] += dl * w.val[i]
+            end
+            dy[i] = 0.0
+        end
+    end
+    return (nothing, nothing, nothing, nothing)
+end
+
+function _apply_rrule_only_chain(w::Vector{Float64}, x::Vector{Float64})
+    y = similar(x)
+    rrule_only_op!(y, w, x, false)
+    return sum(abs2, y)
+end
+
+# TODO: re-enable on Julia 1.10 / 1.11 once
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3959 is fixed (LLVM verifier
+# failure storing the boxed tape into the `{ i64 }` tape slot).
+@static if VERSION >= v"1.12-"
+    @testset "Forward-over-Reverse through rrule without frule" begin
+        @test EnzymeRules.has_rrule_from_sig(
+            Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+        )
+        @test !EnzymeRules.has_frule_from_sig(
+            Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+        )
+
+        w0 = [0.6, -0.4]
+        x0 = [1.2, 0.8]
+        vw = [0.3, -0.7]
+
+        # Exact HVP of f(w) = sum_i tanh(w_i * x_i)^2:
+        # df/dw_i = 2 * tanh(z_i) * sech^2(z_i) * x_i
+        # d2f/dw_i^2 = 2 * x_i^2 * sech^2(z_i) * (sech^2(z_i) - 2 * tanh^2(z_i))
+        g_exact = [
+            let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+                2.0 * t * s2 * x0[i]
+            end for i in eachindex(w0)
+        ]
+        hv_exact = [
+            let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+                2.0 * x0[i]^2 * s2 * (s2 - 2.0 * t^2) * vw[i]
+            end for i in eachindex(w0)
+        ]
+
+        loss_fn = w -> _apply_rrule_only_chain(w, x0)
+        g = zeros(2)
+        hv = zeros(2)
+        Enzyme.autodiff(
+            Enzyme.set_runtime_activity(Forward),
+            Const(
+                (g_out, w_in) -> begin
+                    fill!(g_out, 0.0)
+                    Enzyme.autodiff(
+                        Enzyme.set_runtime_activity(Reverse),
+                        Const(loss_fn),
+                        Active,
+                        Duplicated(w_in, g_out),
+                    )
+                    return nothing
+                end
+            ),
+            Const,
+            Duplicated(g, hv),
+            Duplicated(copy(w0), copy(vw)),
+        )
+        @test g ≈ g_exact rtol = 1.0e-12
+        @test hv ≈ hv_exact rtol = 1.0e-12
+    end
 end
 
 end # ReverseRules

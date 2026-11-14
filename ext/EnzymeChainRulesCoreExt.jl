@@ -3,6 +3,41 @@ module EnzymeChainRulesCoreExt
 using ChainRulesCore
 using EnzymeCore
 using Enzyme
+using SparseArrays
+
+function _accumulate_cotangent!(dval, cr)
+    cr = ChainRulesCore.unthunk(cr)
+    if cr isa ChainRulesCore.AbstractZero
+        return nothing
+    end
+    if dval isa SparseArrays.SparseMatrixCSC
+        if cr isa SparseArrays.SparseMatrixCSC &&
+                dval.colptr == cr.colptr &&
+                dval.rowval == cr.rowval
+            SparseArrays.nonzeros(dval) .+= SparseArrays.nonzeros(cr)
+        else
+            rows = SparseArrays.rowvals(dval)
+            vals = SparseArrays.nonzeros(dval)
+            for j in axes(dval, 2), k in SparseArrays.nzrange(dval, j)
+                vals[k] += cr[rows[k], j]
+            end
+        end
+    elseif dval isa SparseArrays.SparseVector
+        if cr isa SparseArrays.SparseVector &&
+                SparseArrays.nonzeroinds(dval) == SparseArrays.nonzeroinds(cr)
+            SparseArrays.nonzeros(dval) .+= SparseArrays.nonzeros(cr)
+        else
+            inds = SparseArrays.nonzeroinds(dval)
+            vals = SparseArrays.nonzeros(dval)
+            for (k, i) in pairs(inds)
+                vals[k] += cr[i]
+            end
+        end
+    else
+        dval .+= cr
+    end
+    return nothing
+end
 
 
 """
@@ -53,18 +88,18 @@ function Enzyme._import_frule(fn, tys...)
         push!(tangentsi, :($val isa Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
     end
 
-    quote
-        function EnzymeRules.forward(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+    return quote
+        function EnzymeRules.forward(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
             batchsize = same_or_one(1, $(vals...))
-            if batchsize == 1
+            return if batchsize == 1
                 dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval
-                cres = $ChainRulesCore.frule((dfn, $(tangents...),), fn.val, $(primals...); kwargs...)
+                cres = $ChainRulesCore.frule((dfn, $(tangents...)), fn.val, $(primals...); kwargs...)
                 if RetAnnotation <: Const
                     if EnzymeRules.needs_primal(config)
-                       return cres[1]::eltype(RetAnnotation)
-		    else
-		       return nothing
-		    end
+                        return cres[1]::eltype(RetAnnotation)
+                    else
+                        return nothing
+                    end
                 elseif RetAnnotation <: Duplicated
                     return Duplicated(cres[1], cres[2])
                 elseif RetAnnotation <: DuplicatedNoNeed
@@ -77,31 +112,31 @@ function Enzyme._import_frule(fn, tys...)
                     cres = ntuple(Val(batchsize)) do i
                         Base.@_inline_meta
                         dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
-                        $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)
+                        $ChainRulesCore.frule((dfn, $(tangentsi...)), fn.val, $(primals...); kwargs...)
                     end
                     if EnzymeRules.needs_primal(config)
-                       return cres[1][1]::eltype(RetAnnotation) # nothing
-		    else
-		       return nothing
-		    end
+                        return cres[1][1]::eltype(RetAnnotation) # nothing
+                    else
+                        return nothing
+                    end
                 elseif RetAnnotation <: BatchDuplicated
                     cres1 = begin
                         i = 1
                         dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
-                        $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)
+                        $ChainRulesCore.frule((dfn, $(tangentsi...)), fn.val, $(primals...); kwargs...)
                     end
-                    batches = ntuple(Val(batchsize-1)) do j
+                    batches = ntuple(Val(batchsize - 1)) do j
                         Base.@_inline_meta
-                        i = j+1
+                        i = j + 1
                         dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
-                        $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)[2]
+                        $ChainRulesCore.frule((dfn, $(tangentsi...)), fn.val, $(primals...); kwargs...)[2]
                     end
                     return BatchDuplicated(cres1[1], (cres1[2], batches...))
                 elseif RetAnnotation <: BatchDuplicatedNoNeed
                     ntuple(Val(batchsize)) do i
                         Base.@_inline_meta
                         dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
-                        $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)[2]
+                        $ChainRulesCore.frule((dfn, $(tangentsi...)), fn.val, $(primals...); kwargs...)[2]
                     end
                 else
                     @assert false
@@ -151,14 +186,14 @@ function Enzyme._import_rrule(fn, tys...)
     # push!(invertcomb,
     # quote
     #     fn isa Active ? (
-    #         (EnzymeRules.width(config) == 1) ? tcomb[1][1] : 
+    #         (EnzymeRules.width(config) == 1) ? tcomb[1][1] :
     #         ntuple(Val(EnzymeRules.width(config))) do batch_i
     #             Base.@_inline_meta
     #             tcomb[batch_i][1]
     #         end
     #        ) : nothing
     # end)
-    
+
     ptys = []
     for (i, ty) in enumerate(tys)
         push!(nothings, :(nothing))
@@ -171,25 +206,27 @@ function Enzyme._import_rrule(fn, tys...)
         push!(exprs, e)
         primal = Symbol("primcopy_$i")
         push!(primals, primal)
-        push!(valtys, :($primal = $(EnzymeRules.overwritten)(config)[$i+1] ? deepcopy($val.val) : $val.val))
+        push!(valtys, :($primal = $(EnzymeRules.overwritten)(config)[$i + 1] ? deepcopy($val.val) : $val.val))
         push!(tangents, :($val isa $Enzyme.Const ? $ChainRulesCore.NoTangent() : $val.dval))
-        push!(tangentsi, :($val isa  $Enzyme.Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
-        push!(act_res, :($val isa Active ? (res[$i+1] isa $ChainRulesCore.NoTangent ? zero($val) : $ChainRulesCore.unthunk(res[$i+1]) ) : nothing))
-        push!(invertcomb, quote
-        $val isa Active ? (
-            (EnzymeRules.width(config) == 1) ? tcomb[1][$i+1] : 
-            ntuple(Val(EnzymeRules.width(config))) do batch_i
-                Base.@_inline_meta
-                tcomb[batch_i][$i+1]
+        push!(tangentsi, :($val isa $Enzyme.Const ? $ChainRulesCore.NoTangent() : $val.dval[i]))
+        push!(act_res, :($val isa Active ? (res[$i + 1] isa $ChainRulesCore.NoTangent ? zero($val) : $ChainRulesCore.unthunk(res[$i + 1])) : nothing))
+        push!(
+            invertcomb, quote
+                $val isa Active ? (
+                        (EnzymeRules.width(config) == 1) ? tcomb[1][$i + 1] :
+                        ntuple(Val(EnzymeRules.width(config))) do batch_i
+                            Base.@_inline_meta
+                            tcomb[batch_i][$i + 1]
+                    end
+                    ) : nothing
             end
-           ) : nothing
-        end)
+        )
     end
 
-    quote
-        EnzymeRules.has_easy_rule(::$(esc(fn)), $(ptys...)) = true
+    return quote
+        EnzymeRules.has_readonly_rule(::$(esc(fn)), $(ptys...)) = true
 
-        function EnzymeRules.augmented_primal(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.augmented_primal(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
             $(valtys...)
 
             @assert !(RetAnnotation <: Const)
@@ -204,55 +241,59 @@ function Enzyme._import_rrule(fn, tys...)
             shadow, byref = if !EnzymeRules.needs_shadow(config)
                 nothing, Val(false)
             elseif !Enzyme.Compiler.guaranteed_nonactive(Core.Typeof(res))
-                (if EnzymeRules.width(config) == 1
-                    Ref(Enzyme.make_zero(res))
-                else
-                    ntuple(Val(EnzymeRules.width(config))) do j
-                        Base.@_inline_meta
+                (
+                    if EnzymeRules.width(config) == 1
                         Ref(Enzyme.make_zero(res))
-                    end
-                end, Val(true))
-            else 
-                (if EnzymeRules.width(config) == 1
-                    Enzyme.make_zero(res)
-                else
-                    ntuple(Val(EnzymeRules.width(config))) do j
-                        Base.@_inline_meta
+                    else
+                        ntuple(Val(EnzymeRules.width(config))) do j
+                            Base.@_inline_meta
+                            Ref(Enzyme.make_zero(res))
+                        end
+                    end, Val(true),
+                )
+            else
+                (
+                    if EnzymeRules.width(config) == 1
                         Enzyme.make_zero(res)
-                    end
-                end, Val(false))
+                    else
+                        ntuple(Val(EnzymeRules.width(config))) do j
+                            Base.@_inline_meta
+                            Enzyme.make_zero(res)
+                        end
+                    end, Val(false),
+                )
             end
 
             cache = (shadow, pullback, byref)
             return EnzymeRules.augmented_rule_return_type(config, RetAnnotation){typeof(cache)}(primal, shadow, cache)
         end
 
-        function EnzymeRules.reverse(config, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.reverse(config, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
             if !(RetAnnotation <: Const)
                 shadow, pullback, byref = tape
 
                 tcomb = ntuple(Val(EnzymeRules.width(config))) do batch_i
                     Base.@_inline_meta
-                    shad = EnzymeRules.width(config)  == 1 ? shadow : shadow[batch_i]
+                    shad = EnzymeRules.width(config) == 1 ? shadow : shadow[batch_i]
                     if byref === Val(true)
                         shad = shad[]
                     end
                     res = pullback(shad)
 
-                    for (cr, en) in zip(res, (fn, $(vals...),))
-                        if en isa Const || cr isa $ChainRulesCore.NoTangent
+                    for (cr, en) in zip(res, (fn, $(vals...)))
+                        if en isa Const || cr isa $ChainRulesCore.AbstractZero
                             continue
                         end
                         if en isa Active
                             continue
                         end
-                        if EnzymeRules.width(config)  == 1
-                            en.dval .+= cr
+                        if EnzymeRules.width(config) == 1
+                            $_accumulate_cotangent!(en.dval, cr)
                         else
-                            en.dval[batch_i] .+= cr
+                            $_accumulate_cotangent!(en.dval[batch_i], cr)
                         end
                     end
-                    
+
                     ($(act_res...),)
                 end
 
@@ -262,30 +303,30 @@ function Enzyme._import_rrule(fn, tys...)
             return ($(nothings...),)
         end
 
-        function EnzymeRules.reverse(config, fn::FA, dval::Active{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.reverse(config, fn::FA, dval::Active{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
             oldshadow, pullback = tape
 
             shadow = dval.val
 
             tcomb = ntuple(Val(EnzymeRules.width(config))) do batch_i
                 Base.@_inline_meta
-                shad = EnzymeRules.width(config)  == 1 ? shadow : shadow[batch_i]
+                shad = EnzymeRules.width(config) == 1 ? shadow : shadow[batch_i]
                 res = pullback(shad)
 
-                for (cr, en) in zip(res, (fn, $(vals...),))
-                    if en isa Const || cr isa $ChainRulesCore.NoTangent
+                for (cr, en) in zip(res, (fn, $(vals...)))
+                    if en isa Const || cr isa $ChainRulesCore.AbstractZero
                         continue
                     end
                     if en isa Active
                         continue
                     end
-                    if EnzymeRules.width(config)  == 1
-                        en.dval .+= cr
+                    if EnzymeRules.width(config) == 1
+                        $_accumulate_cotangent!(en.dval, cr)
                     else
-                        en.dval[batch_i] .+= cr
+                        $_accumulate_cotangent!(en.dval[batch_i], cr)
                     end
                 end
-                
+
                 ($(act_res...),)
             end
 

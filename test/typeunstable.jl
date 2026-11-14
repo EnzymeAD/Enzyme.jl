@@ -311,6 +311,98 @@ end
     ) == (1.0,)
 end
 
+# Issue 3555: `setfield!(obj, fld, val)` returns `val`, so the shadow of a
+# type-unstable `setproperty!` whose return value is used must be the shadow of
+# `val`, not the primal result.  Returning the primal made width 1 silently
+# wrong and, at width >= 2, built the `[N x ptr]` shadow out of the primal call
+# before that call was emitted ("Instruction does not dominate all uses").
+mutable struct SetpropertyRetBox3555
+    u::Vector{Float64}
+    t::Float64
+end
+
+@noinline setit_3555!(b::SetpropertyRetBox3555, name::Symbol, v) = setproperty!(b, name, v)
+
+function loss_3555(v::Vector{Float64})
+    b = SetpropertyRetBox3555(zeros(length(v)), 0.0)
+    r = setit_3555!(b, :u, v)  # r === v
+    return sum(r) + sum(b.u)   # == 2 * sum(v)
+end
+
+@testset "Issue 3555 forward type-unstable setproperty! with used return" begin
+    v = [1.0, 2.0]
+
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_3555),
+        Enzyme.Duplicated(copy(v), [1.0, 0.0]),
+    )[1] ≈ 2.0
+
+    @test Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(loss_3555),
+        Enzyme.Duplicated(copy(v), [1.0, 0.0]),
+    )[1] ≈ 2.0
+
+    res = Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_3555),
+        Enzyme.BatchDuplicated(copy(v), ([1.0, 0.0], [0.0, 1.0])),
+    )[1]
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 2.0
+
+    dv = zeros(2)
+    Enzyme.autodiff(Reverse, Enzyme.Const(loss_3555), Active, Duplicated(copy(v), dv))
+    @test dv ≈ [2.0, 2.0]
+
+    dv1 = zeros(2)
+    dv2 = zeros(2)
+    Enzyme.autodiff(
+        Reverse, Enzyme.Const(loss_3555), Active, BatchDuplicated(copy(v), (dv1, dv2))
+    )
+    @test dv1 ≈ [2.0, 2.0]
+    @test dv2 ≈ [2.0, 2.0]
+end
+
+function loss_3555_retonly(v::Vector{Float64})
+    b = SetpropertyRetBox3555(zeros(length(v)), 0.0)
+    r = setit_3555!(b, :u, v)
+    return sum(r)
+end
+
+@noinline function setit_3555_inner!(b::SetpropertyRetBox3555, name::Symbol, v)
+    r = setproperty!(b, name, v)
+    return sum(r)::Float64
+end
+
+function loss_3555_inner(v::Vector{Float64})
+    b = SetpropertyRetBox3555(zeros(length(v)), 0.0)
+    return setit_3555_inner!(b, :u, v)
+end
+
+@testset "Issue 3555 reverse type-unstable setproperty! with used return" begin
+    v = [1.0, 2.0]
+
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_3555_retonly),
+        Enzyme.Duplicated(copy(v), [1.0, 0.0]),
+    )[1] ≈ 1.0
+
+    dv = zeros(2)
+    Enzyme.autodiff(
+        Reverse, Enzyme.Const(loss_3555_retonly), Active, Duplicated(copy(v), dv)
+    )
+    @test dv ≈ [1.0, 1.0]
+
+    dv = zeros(2)
+    Enzyme.autodiff(
+        Reverse, Enzyme.Const(loss_3555_inner), Active, Duplicated(copy(v), dv)
+    )
+    @test dv ≈ [1.0, 1.0]
+end
+
 # Issue 3425: an `Active` return whose inferred type is abstract routes combined
 # reverse mode through the split (augmented forward + adjoint) path.  For a batched
 # call the return annotation handed to that path must carry the batch width,
@@ -329,4 +421,89 @@ unstable_batch_3425(p) = (y = unstable_tuple_3425(p); y[1]^2 + y[2]^2)
             @test dp ≈ [2.0, 4.0]
         end
     end
+end
+
+batched_uninferred_target(x) = (2 .* x,)
+batched_uninferred_return(x) = Base.invokelatest(batched_uninferred_target, x)
+
+@testset "Batched forward concrete annotation with uninferred return" begin
+    x = [1.0, 2.0]
+    dx1 = ones(2)
+    dx2 = fill(3.0, 2)
+    return_activity = BatchDuplicated{Tuple{Vector{Float64}}, 2}
+    result = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward), Const(batched_uninferred_return),
+        return_activity, BatchDuplicated(x, (dx1, dx2))
+    )
+    @test result[1][1][1] == [2.0, 2.0]
+    @test result[1][2][1] == [6.0, 6.0]
+end
+
+mutable struct RTSetfieldSeedBox
+    v::Any
+end
+
+# The runtime setfield rules run when jl_f_setfield is differentiated directly,
+# e.g. inside setproperty!(::RefValue{Float64}, ::Symbol, ::Any) once that call
+# is not routed through the runtime-generic path. The shadow field is the
+# adjoint slot of the stored value: it may already hold a seed from the caller,
+# which only the reverse rule may consume and clear.
+@testset "Runtime setfield keeps the shadow seed" begin
+    aug = Enzyme.Compiler.rt_jl_setfield_aug
+    rev = Enzyme.Compiler.rt_jl_setfield_rev
+
+    dout = Ref(1.0)
+    dval = Ref(0.0)
+    aug(dout, :x, Val(false), 4.0, dval)
+    @test dout[] == 1.0
+    rev(dout, :x, Val(false), 4.0, dval)
+    @test dval[] == 1.0
+    @test dout[] == 0.0
+
+    # A constant store lets nothing flow, but still overwrites the slot.
+    dout = Ref(1.0)
+    aug(dout, :x, Val(true), 4.0, nothing)
+    @test dout[] == 1.0
+    rev(dout, :x, Val(true), 4.0, nothing)
+    @test dout[] == 0.0
+
+    # An untyped field only needs a fresh zero when it holds another type.
+    dbox = RTSetfieldSeedBox(nothing)
+    aug(dbox, :v, Val(false), 4.0, Ref(0.0))
+    @test dbox.v === 0.0
+    dbox = RTSetfieldSeedBox(2.0)
+    aug(dbox, :v, Val(false), 4.0, Ref(0.0))
+    @test dbox.v === 2.0
+
+    # That fresh zero is what the reverse of a later read of the field
+    # accumulates into: rt_jl_getfield_rev takes the activity of the slot from
+    # the type of the value it currently holds, so a slot still holding the
+    # previous `nothing` would drop the adjoint and leave nothing for the
+    # store's reverse to pass on.
+    getrev = Enzyme.Compiler.rt_jl_getfield_rev
+    dbox = RTSetfieldSeedBox(nothing)
+    dval = Ref(0.0)
+    aug(dbox, :v, Val(false), 4.0, dval)
+    getrev(dbox, Ref(1.0), Val{:v}, Val(false))
+    @test dbox.v === 1.0
+    rev(dbox, :v, Val(false), 4.0, dval)
+    @test dval[] == 1.0
+    @test dbox.v === 0.0
+end
+
+sum_log(x) = sum(log, x)
+
+function sum_log_gradient!(dx, x)
+    Enzyme.autodiff(Reverse, sum_log, Active, Duplicated(x, dx))
+    return nothing
+end
+
+@testset "Function argument passed through mapreduce" begin
+    # `sum(log, x)` passes `log` through `Base._mapreduce_dim`, which must inline,
+    # otherwise it is invoked despecialized on `log::Function`, dynamically.
+    x = [0.5, 2.0, 4.0]
+    dx = zero(x)
+    sum_log_gradient!(dx, x)
+    @test dx ≈ 1 ./ x
+    @test (@allocated sum_log_gradient!(dx, x)) == 0
 end

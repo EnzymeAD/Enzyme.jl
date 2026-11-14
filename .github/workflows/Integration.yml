@@ -43,8 +43,9 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
         os:
-          - linux-x86-n2-32
+          - linux-x86-n4-32
         package:
           - Bijectors
           - Checkpointing
@@ -61,12 +62,14 @@ jobs:
           - Molly
           - MPI
           - Comrade
+          - TensorKit
           - Turing
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
+          include-all-prereleases: true
 
       - name: Load Julia packages from cache
         uses: julia-actions/cache@v3.2.0

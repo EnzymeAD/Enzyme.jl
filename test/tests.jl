@@ -129,14 +129,14 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    @test !occursin("aug",fn)
+    @test !occursin("aug", fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    @test !occursin("aug",fn)
+    @test !occursin("aug", fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
@@ -268,8 +268,10 @@ end
     m = ZeroAllocCell(ones(Float32, 2, 2))
     x = 1.0f0
     # This should not segfault or bus error when turns is 0 (i.e. zero-sized tape/cache allocation)
-    grads, val = Enzyme.autodiff(set_runtime_activity(ReverseWithPrimal), Const(zero_alloc_loss_func), Active,
-                                 Const(x), Duplicated(m, ZeroAllocCell(zeros(Float32, 2, 2))), Const(0), Const(2))
+    grads, val = Enzyme.autodiff(
+        set_runtime_activity(ReverseWithPrimal), Const(zero_alloc_loss_func), Active,
+        Const(x), Duplicated(m, ZeroAllocCell(zeros(Float32, 2, 2))), Const(0), Const(2)
+    )
     @test val ≈ 2.0f0
 end
 
@@ -558,8 +560,8 @@ end
 
 @testset "No inference" begin
     c = 5.0
-    @test 5.0 ≈ autodiff(Reverse, (A,) -> c * A, Active, Active(2.0))[1][1]
-    @test 5.0 ≈ autodiff(Forward, (A,) -> c * A, Duplicated(2.0, 1.0))[1]
+    @test 5.0 ≈ autodiff(Reverse, (A) -> c * A, Active, Active(2.0))[1][1]
+    @test 5.0 ≈ autodiff(Forward, (A) -> c * A, Duplicated(2.0, 1.0))[1]
 end
 
 @testset "Type-instable capture" begin
@@ -630,9 +632,9 @@ end
         x_vec = [2.0, 2.0, 2.0, 2.0, 2.0]
         dx1 = zeros(5)
         Enzyme.autodiff(Reverse, f_bug, Active, Duplicated(copy(x_vec), dx1), Const(P_mat))
-        
+
         # Finite difference for validation
-        h = 1e-7
+        h = 1.0e-7
         f_val = f_bug(x_vec, P_mat)
         fd = zeros(5)
         for i in 1:5
@@ -640,7 +642,7 @@ end
             x_plus[i] += h
             fd[i] = (f_bug(x_plus, P_mat) - f_val) / h
         end
-        @test dx1 ≈ fd rtol=1e-3
+        @test dx1 ≈ fd rtol = 1.0e-3
     end
 end
 
@@ -936,9 +938,9 @@ function mixture_loglikelihood2(params::AbstractVector{<:Real}, data::AbstractVe
     mat = normal_pdf.(data, means', stds' .^ 2) # (N, K)
     return obj_true = sum(
         sum(
-                weight * normal_pdf(x, mean, std^2)
+            weight * normal_pdf(x, mean, std^2)
                 for (weight, mean, std) in zip(weights, means, stds)
-            ) |> log
+        ) |> log
             for x in data
     )
 end
@@ -1057,7 +1059,7 @@ end
 end
 
 function multisum(M)
-  return sum(i -> sum(j -> M[j, i], 1:size(M, 1)), 1:size(M, 2))
+    return sum(i -> sum(j -> M[j, i], 1:size(M, 1)), 1:size(M, 2))
 end
 
 @testset "Switch decay" begin
@@ -1076,4 +1078,3 @@ end
     g = Enzyme.gradient(Reverse, (B, A_val) -> sum(cholesky(A_val) \ B), B, Const(A))[1]
     @test g ≈ [0.4 0.6; 0.6 0.2]
 end
-
