@@ -5204,19 +5204,19 @@ end
 # compilation's `set_module_types!` re-applies `"enzyme_custom"` if and only if a
 # rule exists for the outer mode.
 function strip_custom_rule_attrs!(fn::LLVM.Function)
-    attributes = function_attributes(fn)
+    attributes = fn.function_attributes
     had_custom = false
     for fattr in collect(attributes)
         if isa(fattr, LLVM.StringAttribute) &&
-           kind(fattr) == "enzyme_math" &&
-           LLVM.value(fattr) == "enzyme_custom"
+           fattr.kind == "enzyme_math" &&
+           fattr.value == "enzyme_custom"
             delete!(attributes, fattr)
             had_custom = true
         end
     end
     if had_custom
         for fattr in collect(attributes)
-            if isa(fattr, LLVM.StringAttribute) && kind(fattr) == PRESERVEPRIMAL_ATTR_KIND
+            if isa(fattr, LLVM.StringAttribute) && fattr.kind == PRESERVEPRIMAL_ATTR_KIND
                 delete!(attributes, fattr)
             end
         end
@@ -5225,7 +5225,7 @@ function strip_custom_rule_attrs!(fn::LLVM.Function)
 end
 
 function strip_custom_rule_attrs!(mod::LLVM.Module)
-    for f in functions(mod)
+    for f in mod.functions
         strip_custom_rule_attrs!(f)
     end
     return
@@ -6319,19 +6319,19 @@ function alloca_memtransfer_entries(world::UInt, alloca::LLVM.AllocaInst, offset
         v = pop!(todo)
         v in seen && continue
         push!(seen, v)
-        for u in LLVM.uses(v)
-            user = LLVM.user(u)
+        for u in v.uses
+            user = u.user
             if isa(user, LLVM.AddrSpaceCastInst) || isa(user, LLVM.BitCastInst) ||
-                    (isa(user, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(user)[2:end]))
+                    (isa(user, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), user.operands[2:end]))
                 push!(todo, user)
                 continue
             end
             isa(user, LLVM.CallInst) || continue
-            fn = LLVM.called_operand(user)
+            fn = user.called_operand
             fn isa LLVM.Function || continue
-            intr = LLVM.API.LLVMGetIntrinsicID(fn)
-            (intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id) || continue
-            ops = operands(user)
+            intr = fn.intrinsic
+            (intr == LLVM.Intrinsic("llvm.memcpy") || intr == LLVM.Intrinsic("llvm.memmove")) || continue
+            ops = user.operands
             ops[1] == v || continue
             ops[3] isa LLVM.ConstantInt || continue
             dbase, doff = get_base_and_offset(ops[1])

@@ -1135,10 +1135,10 @@ end
         )
         Enzyme.Compiler.annotate!(mod)
         for gname in ("jl_true", "ijl_false", "jl_small_typeof", "jl_undefref_exception", "jl_float64_type")
-            gv = LLVM.globals(mod)[gname]
-            @test haskey(LLVM.metadata(gv), "enzyme_inactive")
+            gv = mod.globals[gname]
+            @test haskey(gv.metadata, "enzyme_inactive")
         end
-        @test haskey(LLVM.metadata(LLVM.globals(mod)["jl_float64_type"]), "enzyme_ta_norecur")
+        @test haskey(mod.globals["jl_float64_type"].metadata, "enzyme_ta_norecur")
     end
 
     # Boxed runtime Bool (@jl_true / @jl_false) merged into Any return across widths 1 and 2
