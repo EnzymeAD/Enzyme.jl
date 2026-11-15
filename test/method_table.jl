@@ -44,7 +44,8 @@ end
     @test GPUCompiler.method_table(backend_job) === mt_test_table
 
     interp = GPUCompiler.get_interpreter(backend_job)
-    @test Core.Compiler.method_table(interp).mt === mt_test_table
+    # The view type depends on the GPUCompiler version (`MethodTableStack` from 2.22 on).
+    @test first(Enzyme.Compiler.method_tables(Core.Compiler.method_table(interp))) === mt_test_table
     # Inference under the Enzyme job now sees the backend's overlay, as the primal job does.
     @test Enzyme.Compiler.return_type(interp, mi) === String
     @static if VERSION >= v"1.11.0-DEV.1552"

@@ -222,6 +222,31 @@ end
     res !== nothing && return res
     return Enzyme.lookup_world(sig, view.world, view.parent, min_world, max_world)
 end
+# GPUCompiler 2.22 and later stack the method tables in a flat `MethodTableStack` instead,
+# which looks up methods in each table in turn and then in Base.
+@static if isdefined(GPUCompiler, :MethodTableStack)
+    method_tables(view::GPUCompiler.MethodTableStack) = (view.tables...,)
+
+    @inline function Enzyme.has_method(@nospecialize(sig::Type), world::UInt, view::GPUCompiler.MethodTableStack)
+        for mt in view.tables
+            Enzyme.has_method(sig, view.world, mt) && return true
+        end
+        return Enzyme.has_method(sig, view.world, nothing)
+    end
+    @inline function Enzyme.lookup_world(
+        @nospecialize(sig::Type),
+        world::UInt,
+        view::GPUCompiler.MethodTableStack,
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
+        for mt in view.tables
+            res = Enzyme.lookup_world(sig, view.world, mt, min_world, max_world)
+            res !== nothing && return res
+        end
+        return Enzyme.lookup_world(sig, view.world, nothing, min_world, max_world)
+    end
+end
 @static if isdefined(Core.Compiler, :CachedMethodTable)
     method_tables(view::Core.Compiler.CachedMethodTable) = method_tables(view.table)
 end
