@@ -103,7 +103,9 @@ The return:
   tracked pointers stripped, and the tracked pointers go through the
   return-roots parameter.
 - A small `Union` return gets its byte buffer as the leading pointer
-  parameter, and the function returns `{boxed-or-null, selector}`.
+  parameter, and the function returns `{boxed-or-null, selector}`. Since
+  Julia 1.14 (julia#55045) members may hold GC pointers, which go through a
+  return-roots parameter after the buffer.
 - A boxed return is a tracked pointer.
 - Every other return keeps the value's LLVM type.
 
@@ -142,6 +144,11 @@ function specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::
         if is_sret_union(RT)
             push!(params, LLVM.PointerType(LLVM.ArrayType(T_int8, union_alloca_type(RT))))
             push!(param_attrs, LLVM.Attribute[StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))])
+            if returnRoots !== nothing
+                # julia#55045: the roots of a member with GC pointers follow the buffer.
+                push!(params, LLVM.PointerType(convert(LLVMType, eltype(returnRoots))))
+                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), nocapture_attr(), EnumAttribute(:noundef)])
+            end
             retty = LLVM.StructType(LLVMType[T_prjlvalue, T_int8])
         else
             # As in Julia's codegen, the sret attribute carries the full type,

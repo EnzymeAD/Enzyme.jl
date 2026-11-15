@@ -225,7 +225,9 @@ function fixup_1p12_sret!(f::LLVM.Function)
 
     _, sret, returnRoots = get_return_info(RT)
 
-    if sret === nothing || returnRoots == nothing
+    # A union return (julia#55045) keeps its roots apart from the union buffer,
+    # whose layout depends on the member, so there is no struct copy to split.
+    if sret === nothing || returnRoots == nothing || is_sret_union(RT)
         return
     end
 
