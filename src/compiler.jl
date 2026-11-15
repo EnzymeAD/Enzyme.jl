@@ -2620,11 +2620,7 @@ end
 function has_gc_zeroing_bundle(@nospecialize(inst::LLVM.Value))::Bool
     isa(inst, LLVM.CallInst) || return false
     for bundle in operand_bundles(inst)
-        tag = if isdefined(LLVM, :OperandBundleDef)
-            LLVM.tag_name(LLVM.OperandBundleDef(bundle))
-        else
-            LLVM.tag(bundle)
-        end
+        tag = LLVM.tag(bundle)
         if tag == "julia.gc_alloc_ptr_offsets" || tag == "julia.gc_alloc_zeroinit"
             return true
         end
