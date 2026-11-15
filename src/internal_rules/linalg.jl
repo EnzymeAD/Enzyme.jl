@@ -54,6 +54,34 @@ _tri_blas_args(A::Transpose{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) wher
 _tri_blas_args(A::Adjoint{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
     (parent(A).data, _tri_uplo(parent(A)), 'C', _tri_diag(parent(A)))
 
+# X = op(A) X (side 'L') or X = X op(A) (side 'R') with BLAS, where op(A) is given by the BLAS
+# arguments uplo, trans and diag. For a vector x, side must be 'L'.
+function _blas_trimul!(
+        side::Char, uplo::Char, trans::Char, diag::Char,
+        A::StridedMatrix{T}, X::StridedMatrix{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    return BLAS.trmm!(side, uplo, trans, diag, one(T), A, X)
+end
+function _blas_trimul!(
+        side::Char, uplo::Char, trans::Char, diag::Char,
+        A::StridedMatrix{T}, x::StridedVector{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    side == 'L' || throw(ArgumentError(lazy"side must be 'L' for a vector, got '$side'"))
+    return BLAS.trmv!(uplo, trans, diag, A, x)
+end
+
+# B = op(A) \ B with BLAS, where op(A) is given by the BLAS arguments uplo, trans and diag.
+function _blas_trisolve!(
+        uplo::Char, trans::Char, diag::Char, A::StridedMatrix{T}, B::StridedMatrix{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    return BLAS.trsm!('L', uplo, trans, diag, one(T), A, B)
+end
+function _blas_trisolve!(
+        uplo::Char, trans::Char, diag::Char, A::StridedMatrix{T}, b::StridedVector{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    return BLAS.trsv!(uplo, trans, diag, A, b)
+end
+
 # Like `ldiv!(A, B)`, for A triangular.
 _trisolve!(A, B) = ldiv!(A, B)
 function _trisolve!(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra.BlasFloat}
@@ -62,12 +90,7 @@ function _trisolve!(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: Lin
         return ldiv!(A, B)
     end
     data, uplo, trans, diag = args
-    if B isa AbstractVector
-        BLAS.trsv!(uplo, trans, diag, data, B)
-    else
-        BLAS.trsm!('L', uplo, trans, diag, one(T), data, B)
-    end
-    return B
+    return _blas_trisolve!(uplo, trans, diag, data, B)
 end
 
 # Like `A \ B`, for A triangular.
@@ -293,12 +316,7 @@ function _trimul_sub!(
     end
     data, uplo, trans, diag = args
     copyto!(tmp, B)
-    if tmp isa AbstractVector
-        BLAS.trmv!(uplo, trans, diag, data, tmp)
-    else
-        BLAS.trmm!('L', uplo, trans, diag, one(T), data, tmp)
-    end
-    dB .-= tmp
+    dB .-= _blas_trimul!('L', uplo, trans, diag, data, tmp)
     return dB
 end
 
@@ -710,6 +728,169 @@ function EnzymeRules.forward(
     else
         return nothing
     end
+end
+
+# Whether the array x is constant. With runtime activity, x is also constant if its shadow is
+# itself.
+_isconst(config::EnzymeRules.FwdConfig, x::Annotation{<:AbstractArray}) =
+    x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)
+
+function _fwd_return(config::EnzymeRules.FwdConfig, primal, shadow)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(primal, shadow)
+        else
+            return BatchDuplicated(primal, shadow)
+        end
+    elseif EnzymeRules.needs_shadow(config)
+        return shadow
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+
+# tmp = op(tri(dA)) X0 (side 'L') or X0 op(tri(dA)) (side 'R'), where tri(dA) is the triangle
+# of dA that trmm and trmv read, without the diagonal if diag == 'U'. The strict triangle of dA
+# is the triangle of a submatrix of dA shifted by one row or column, so it is multiplied with
+# that submatrix instead of subtracting the unit diagonal afterwards, which would cancel.
+function _tri_mul_tangent!(
+        tmp::StridedVecOrMat{T}, side::Char, uplo::Char, trans::Char, diag::Char,
+        dA::StridedMatrix{T}, X0::StridedVecOrMat{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    if diag == 'N'
+        copyto!(tmp, X0)
+        return _blas_trimul!(side, uplo, trans, 'N', dA, tmp)
+    end
+    fill!(tmp, zero(T))
+    n = size(dA, 1)
+    n == 1 && return tmp
+    lo, hi = 1:(n - 1), 2:n
+    block = uplo == 'U' ? view(dA, lo, hi) : view(dA, hi, lo)
+    # Whether op(tri(dA)) is upper triangular
+    upper = (uplo == 'U') == (trans == 'N')
+    dim = side == 'L' ? 1 : 2
+    out, in = upper == (side == 'L') ? (lo, hi) : (hi, lo)
+    tmp_out = selectdim(tmp, dim, out)
+    copyto!(tmp_out, selectdim(X0, dim, in))
+    _blas_trimul!(side, uplo, trans, 'N', block, tmp_out)
+    return tmp
+end
+
+# B = α op(A) B (side 'L') or α B op(A) (side 'R'):
+# dB = op(A) (α dB + dα B) + α op(tri(dA)) B (side 'L', analogously for side 'R'), with B the
+# input
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(BLAS.trmm!)},
+        RT::Type,
+        side::Const{Char},
+        uplo::Const{Char},
+        transa::Const{Char},
+        diag::Const{Char},
+        alpha::Annotation{<:Number},
+        A::Annotation{<:StridedMatrix{T}},
+        B::Annotation{<:StridedMatrix{T}},
+    ) where {T <: LinearAlgebra.BlasFloat}
+    s, ul, tA, dg = side.val, uplo.val, transa.val, diag.val
+    α = alpha.val
+    if _isconst(config, B)
+        func.val(s, ul, tA, dg, α, A.val, B.val)
+        return _fwd_return(config, B.val, B isa Const ? nothing : B.dval)
+    end
+
+    A_const = _isconst(config, A)
+    α_const = alpha isa Const
+    B0 = A_const && α_const ? nothing : copy(B.val)
+    tmp = A_const ? nothing : similar(B.val)
+    func.val(s, ul, tA, dg, α, A.val, B.val)
+
+    N = EnzymeRules.width(config)
+    for i in 1:N
+        dB = N == 1 ? B.dval : B.dval[i]
+        if α_const
+            func.val(s, ul, tA, dg, α, A.val, dB)
+        else
+            dα = N == 1 ? alpha.dval : alpha.dval[i]
+            dB .= α .* dB .+ dα .* B0
+            func.val(s, ul, tA, dg, one(T), A.val, dB)
+        end
+        if !A_const
+            dA = N == 1 ? A.dval : A.dval[i]
+            dB .+= α .* _tri_mul_tangent!(tmp, s, ul, tA, dg, dA, B0)
+        end
+    end
+    return _fwd_return(config, B.val, B.dval)
+end
+
+# x = op(A) x: dx = op(A) dx + op(tri(dA)) x, with x the input
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(BLAS.trmv!)},
+        RT::Type,
+        uplo::Const{Char},
+        trans::Const{Char},
+        diag::Const{Char},
+        A::Annotation{<:StridedMatrix{T}},
+        x::Annotation{<:StridedVector{T}},
+    ) where {T <: LinearAlgebra.BlasFloat}
+    ul, tA, dg = uplo.val, trans.val, diag.val
+    if _isconst(config, x)
+        func.val(ul, tA, dg, A.val, x.val)
+        return _fwd_return(config, x.val, x isa Const ? nothing : x.dval)
+    end
+
+    A_const = _isconst(config, A)
+    x0 = A_const ? nothing : copy(x.val)
+    tmp = A_const ? nothing : similar(x.val)
+    func.val(ul, tA, dg, A.val, x.val)
+
+    N = EnzymeRules.width(config)
+    for i in 1:N
+        dx = N == 1 ? x.dval : x.dval[i]
+        func.val(ul, tA, dg, A.val, dx)
+        if !A_const
+            dA = N == 1 ? A.dval : A.dval[i]
+            dx .+= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, dA, x0)
+        end
+    end
+    return _fwd_return(config, x.val, x.dval)
+end
+
+# B = op(A) \ B: dB = op(A) \ (dB - op(tri(dA)) B), with B the output.
+# Enzyme's native trtrs rule does not support forward mode, and unlike for BLAS functions there
+# is no fallback implementation of LAPACK functions. The tangents are solved with trsv/trsm
+# instead of trtrs, as in `_trisolve!`.
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(LAPACK.trtrs!)},
+        RT::Type,
+        uplo::Const{Char},
+        trans::Const{Char},
+        diag::Const{Char},
+        A::Annotation{<:StridedMatrix{T}},
+        B::Annotation{<:StridedVecOrMat{T}},
+    ) where {T <: LinearAlgebra.BlasFloat}
+    ul, tA, dg = uplo.val, trans.val, diag.val
+    # Throws for singular A, as without differentiation
+    func.val(ul, tA, dg, A.val, B.val)
+    if _isconst(config, B)
+        return _fwd_return(config, B.val, B isa Const ? nothing : B.dval)
+    end
+
+    A_const = _isconst(config, A)
+    tmp = A_const ? nothing : similar(B.val)
+    N = EnzymeRules.width(config)
+    for i in 1:N
+        dB = N == 1 ? B.dval : B.dval[i]
+        if !A_const
+            dA = N == 1 ? A.dval : A.dval[i]
+            dB .-= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, dA, B.val)
+        end
+        _blas_trisolve!(ul, tA, dg, A.val, dB)
+    end
+    return _fwd_return(config, B.val, B.dval)
 end
 
 EnzymeRules.has_readonly_rule(::typeof(logdet), ::StridedMatrix) = true
