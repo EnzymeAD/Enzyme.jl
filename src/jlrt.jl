@@ -559,11 +559,7 @@ function define_ntuple_type!(mod::LLVM.Module)
             push!(parameter_attributes(apply_tuple_v, 1), EnumAttribute("readonly", 0))
             push!(parameter_attributes(apply_tuple_v, 1), EnumAttribute("nocapture", 0))
         end
-        roots = if isdefined(LLVM, :OperandBundleDef)
-            [LLVM.OperandBundleDef("jl_roots", LLVM.Value[eltype])]
-        else
-            [LLVM.OperandBundle("jl_roots", LLVM.Value[eltype])]
-        end
+        roots = [LLVM.OperandBundle("jl_roots", LLVM.Value[eltype])]
         ret!(builder, call!(builder, apply_tuple_v_FT, apply_tuple_v, LLVM.Value[buf, n], roots))
 
         position!(builder, heap)
