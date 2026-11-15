@@ -1816,6 +1816,14 @@ function enzyme_custom_common_rev(
 
     mode = get_mode(gutils)
 
+    # A mixed sret has scalar adjoints in its data buffer, in addition to the
+    # shared pointer shadows. A type-only reverse argument cannot carry them.
+    _, _, primal_roots = get_return_info(RealRt)
+    mixed_return = VERSION >= v"1.12" && primal_roots !== nothing &&
+        needsShadow && active_reg(RealRt, world) == MixedState &&
+        !is_constant_value(gutils, operands(orig)[1 + has_swiftself(LLVM.called_operand(orig))])
+    reverse_RT = mixed_return ? Active{RealRt} : RT
+
     @assert ami !== nothing
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
@@ -1905,12 +1913,12 @@ function enzyme_custom_common_rev(
             insert!(tt, 1, kwtup)
             insert!(tt, 2, Core.typeof(EnzymeRules.reverse))
             insert!(tt, 3, C)
-            insert!(tt, 5, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
+            insert!(tt, 5, reverse_RT <: Active ? (width == 1 ? reverse_RT : NTuple{Int(width), reverse_RT}) : Type{RT})
             insert!(tt, 6, TapeT)
         else
             @assert kwtup === nothing
             insert!(tt, 1, C)
-            insert!(tt, 3, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
+            insert!(tt, 3, reverse_RT <: Active ? (width == 1 ? reverse_RT : NTuple{Int(width), reverse_RT}) : Type{RT})
             insert!(tt, 4, TapeT)
         end
         rev_TT = Tuple{tt...}
@@ -2032,9 +2040,9 @@ function enzyme_custom_common_rev(
                 (returnRoots !== nothing) +
                 gcstack_arg
 
-            if (RT <: Active)
+            if reverse_RT <: Active
                 trueidx += 1
-                if inline_roots_type(RT) != 0
+                if inline_roots_type(reverse_RT) != 0
                     trueidx += 1
                 end
             end
@@ -2099,11 +2107,11 @@ function enzyme_custom_common_rev(
                 insert!(args, tape_idx + 1, tape_al)
             end
         end
-        if RT <: Active
+        if reverse_RT <: Active
             nRT = if width == 1
-                RT
+                reverse_RT
             else
-                NTuple{Int(width), RT}
+                NTuple{Int(width), reverse_RT}
             end
 
             llty = convert(LLVMType, nRT)
@@ -2112,7 +2120,19 @@ function enzyme_custom_common_rev(
 
 	    ral = nothing
 
-            if API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false) == API.DFT_OUT_DIFF #=isforeign=#
+            if mixed_return
+                llety = convert(LLVMType, RealRt)
+                ptr_val = lookup_value(gutils, invert_pointer(gutils, operands(orig)[1 + orig_swiftself], B), B)
+                roots_val = lookup_value(gutils, invert_pointer(gutils, operands(orig)[2 + orig_swiftself], B), B)
+                val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
+                for idx in 1:width
+                    ev = width == 1 ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                    roots = width == 1 ? roots_val : extract_value!(B, roots_val, idx - 1)
+                    ld = recombine_value_ptr!(B, llety, ev, roots)
+                    extract_nonjlvalues_into!(B, llety, ev, LLVM.null(llety))
+                    val = width == 1 ? ld : insert_value!(B, val, ld, idx - 1)
+                end
+            elseif API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false) == API.DFT_OUT_DIFF #=isforeign=#
 		@assert active_roots == 0
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
                 API.EnzymeGradientUtilsSetDiffe(gutils, orig, LLVM.null(value_type(val)), B)
@@ -2153,7 +2173,11 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            al0 = al = emit_allocobj!(B, nRT, "activeRT.$RT")
+            al0 = al = if mixed_return
+                alloca!(alloctx, strip_tracked_pointers(llty), "activeRT.$reverse_RT")
+            else
+                emit_allocobj!(B, nRT, "activeRT.$RT")
+            end
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
@@ -2172,7 +2196,13 @@ function enzyme_custom_common_rev(
                 pty = LLVM.LLVMType(API.EnzymeGetShadowType(width, llety))
                 ptr = bitcast!(B, al, LLVM.PointerType(pty, Derived))
             end
-            store!(B, val, ptr)
+            if mixed_return
+                ral = create_rooted_array(alloctx, inline_roots_type(nRT))
+                extract_roots_from_value!(B, val, ral)
+                extract_nonjlvalues_into!(B, value_type(val), ptr, val)
+            else
+                store!(B, val, ptr)
+            end
 
             if active_roots == 0 && any_jltypes(llty)
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))

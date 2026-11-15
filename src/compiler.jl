@@ -5392,6 +5392,48 @@ function strip_activity_inactive_md!(mod::LLVM.Module)
     return
 end
 
+function allow_custom_sret_reads!(attrs)
+    for attr in collect(attrs)
+        k = kind(attr)
+        if k == READNONE_ATTR_KIND || k == WRITEONLY_ATTR_KIND
+            delete!(attrs, attr)
+        elseif attr isa EnumAttribute && k == get_attr_kind_from_name("memory")
+            push!(attrs, EnumAttribute("memory", LLVM.value(attr) | ReadOnlyArgMemEffects.data))
+        end
+    end
+    return nothing
+end
+
+# Custom augmented rules initialize mixed return shadows in the forward pass. Keep
+# these buffers alive instead of rematerializing them only in reverse. Run this
+# after optimization, which can otherwise infer the write-only attributes again.
+function preserve_custom_sret_shadows!(mod::LLVM.Module, world::UInt)
+    custom = StringAttribute("enzyme_math", "enzyme_custom")
+    for f in functions(mod)
+        custom in collect(function_attributes(f)) || continue
+        roots = findfirst(i -> has_arg_attr(f, i, StringAttribute("enzymejl_returnRoots")), 1:Int(length(parameters(f))))
+        roots === nothing && continue
+        _, RT = enzyme_custom_extract_mi(f, false)
+        RT !== nothing && guaranteed_nonactive(RT, world) && continue
+        targets = LLVM.Value[f]
+        for u in LLVM.uses(f)
+            call = LLVM.user(u)
+            if call isa LLVM.CallInst && LLVM.called_operand(call) == f
+                push!(targets, call)
+            end
+        end
+        for target in targets
+            allow_custom_sret_reads!(function_attributes(target))
+            # The split return's data buffer immediately precedes its roots.
+            for i in (roots - 1):roots
+                attrs = target === f ? parameter_attributes(f, i) : argument_attributes(target, i)
+                allow_custom_sret_reads!(attrs)
+            end
+        end
+    end
+    return nothing
+end
+
 # `"enzyme_math"="enzyme_custom"` is mode-dependent (`cached_has_frule` in forward
 # mode vs `cached_has_rrule` in reverse mode). Strip it after `enzyme!` has consumed
 # it so that bitcode cached in `autodiff_cache` for nested differentiation (e.g.
@@ -7354,6 +7396,7 @@ end
         memcpy_alloca_to_loadstore(mod, job.world, enzyme_ctx)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
+        preserve_custom_sret_shadows!(mod, job.world)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,

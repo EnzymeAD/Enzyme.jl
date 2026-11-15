@@ -4,6 +4,33 @@ using Test
 
 const U0_test = [2.0]
 
+struct MixedCopyState
+    location::Float64
+    values::Vector{Float64}
+end
+
+function mixed_copied_sum(x)
+    copied = deepcopy(MixedCopyState(x, [x, 2x]))
+    return copied.location + sum(copied.values)
+end
+
+mixed_copy_scalar(x, v) = deepcopy(MixedCopyState(x, v)).location * sum(v)
+mixed_copy_array(x, v) = sum(deepcopy(MixedCopyState(x, v)).values)
+mixed_copy_alias(x, v) = (c = deepcopy((x, v, v)); c[1] * (sum(c[2]) + sum(c[3])))
+
+@testset "mixed deepcopy" begin
+    if VERSION >= v"1.12"
+        @test only(Enzyme.gradient(Reverse, mixed_copied_sum, 2.0)) == 4.0
+        @test Enzyme.gradient(Reverse, mixed_copy_array, 2.0, [1.0, 2.0, 3.0]) == (0.0, ones(3))
+        @test Enzyme.gradient(Reverse, mixed_copy_alias, 2.0, [1.0, 2.0, 3.0]) == (12.0, fill(4.0, 3))
+        v = [1.0, 2.0, 3.0]
+        for x in (0.0, 2.0)
+            @test Enzyme.gradient(set_runtime_activity(Reverse), mixed_copy_scalar, x, Const(v)) == (6.0, nothing)
+        end
+        @test v == [1.0, 2.0, 3.0]
+    end
+end
+
 @testset "core fallback traversal" begin
     @testset "Dict metadata" begin
         mutable struct CustomStateFallback
