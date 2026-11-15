@@ -45,13 +45,22 @@ function array_shadow_handler(
 
     typ = eltype(typ)
 
-    memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory" || nm == "jl_alloc_genericmemory_unchecked" || nm == "ijl_alloc_genericmemory_unchecked"
+    memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory" || nm == "jl_alloc_genericmemory_unchecked" || nm == "ijl_alloc_genericmemory_unchecked" || nm == "julia.gc_alloc_memory"
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
     for i in 1:numArgs
         push!(vals, LLVM.Value(unsafe_load(Args, i)))
         push!(valTys, API.VT_Primal)
+    end
+
+    if nm == "julia.gc_alloc_memory"
+        # julia.gc_alloc_memory(task, nbytes, type, length, zeroinit) (julia#63672) sets
+        # the length itself, and zeroes the data when asked to. Ask for a zeroed shadow,
+        # so that it needs neither a length store nor a memset.
+        vals[5] = LLVM.ConstantInt(LLVM.Int1Type(), 1)
+        anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, false) #=lookup=#
+        return Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
     end
 
     anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, false) #=lookup=#
@@ -141,6 +150,7 @@ end
             "jl_new_array", "ijl_new_array",
             "jl_alloc_genericmemory", "ijl_alloc_genericmemory",
             "jl_alloc_genericmemory_unchecked", "ijl_alloc_genericmemory_unchecked",
+            "julia.gc_alloc_memory",
         ),
         @cfunction(
             array_shadow_handler,

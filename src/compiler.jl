@@ -7084,7 +7084,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                                     nm == "jl_alloc_genericmemory" ||
                                     nm == "ijl_alloc_genericmemory" ||
                                     nm == "jl_alloc_genericmemory_unchecked" ||
-                                    nm == "ijl_alloc_genericmemory_unchecked"
+                                    nm == "ijl_alloc_genericmemory_unchecked" ||
+                                    nm == "julia.gc_alloc_memory"
                                 continue
                             end
                             if is_readonly(called)
