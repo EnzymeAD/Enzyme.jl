@@ -713,7 +713,9 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
             if !isa(fn, LLVM.Function)
                 continue
             end
-            if fn.name == "julia.gc_alloc_obj"
+            # Julia's AllocOpt copies this metadata to the alloca it may turn the
+            # allocation into, including (Julia 1.14+) that of a `Memory`.
+            if fn.name == "julia.gc_alloc_obj" || fn.name == "julia.gc_alloc_memory"
                 legal, RT, _ = abs_typeof(inst, enzyme_ctx)
                 if legal
                     inst.metadata["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
