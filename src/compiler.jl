@@ -212,12 +212,12 @@ method_tables(view::GPUCompiler.StackedMethodTable) = (view.mt, method_tables(vi
     return Enzyme.has_method(sig, view.world, view.mt) || Enzyme.has_method(sig, view.world, view.parent)
 end
 @inline function Enzyme.lookup_world(
-    @nospecialize(sig::Type),
-    world::UInt,
-    view::GPUCompiler.StackedMethodTable,
-    min_world::Ref{UInt},
-    max_world::Ref{UInt},
-)
+        @nospecialize(sig::Type),
+        world::UInt,
+        view::GPUCompiler.StackedMethodTable,
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
     res = Enzyme.lookup_world(sig, view.world, view.mt, min_world, max_world)
     res !== nothing && return res
     return Enzyme.lookup_world(sig, view.world, view.parent, min_world, max_world)
@@ -234,12 +234,12 @@ end
         return Enzyme.has_method(sig, view.world, nothing)
     end
     @inline function Enzyme.lookup_world(
-        @nospecialize(sig::Type),
-        world::UInt,
-        view::GPUCompiler.MethodTableStack,
-        min_world::Ref{UInt},
-        max_world::Ref{UInt},
-    )
+            @nospecialize(sig::Type),
+            world::UInt,
+            view::GPUCompiler.MethodTableStack,
+            min_world::Ref{UInt},
+            max_world::Ref{UInt},
+        )
         for mt in view.tables
             res = Enzyme.lookup_world(sig, view.world, mt, min_world, max_world)
             res !== nothing && return res
@@ -2370,7 +2370,9 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 
     isboxed_ref = Ref{Bool}()
     LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
-                (Any, LLVM.API.LLVMContextRef, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
+            (Any, LLVM.API.LLVMContextRef, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref
+        )
+    )
 
     if !isboxed_ref[]
         zeroAll = false
@@ -5233,8 +5235,8 @@ function strip_custom_rule_attrs!(fn::LLVM.Function)
     had_custom = false
     for fattr in collect(attributes)
         if isa(fattr, LLVM.StringAttribute) &&
-           fattr.kind == "enzyme_math" &&
-           fattr.value == "enzyme_custom"
+                fattr.kind == "enzyme_math" &&
+                fattr.value == "enzyme_custom"
             delete!(attributes, fattr)
             had_custom = true
         end
@@ -6864,7 +6866,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
-             (!isa(fn, LLVM.Function) || isempty(fn.blocks)) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst))
+                        (!isa(fn, LLVM.Function) || isempty(fn.blocks))
+                ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst)
+            )
             legal, source_typ, byref = abs_typeof(inst, enzyme_ctx)
             codegen_typ = inst.value_type
             if legal

@@ -38,7 +38,7 @@ end
                         if fn.name == "julia.safepoint"
                             Compiler.eraseInst(blk, inst)
                         end
-                    end     
+                    end
                 end
             end
             hasNoRet = haskey(copysetfn.function_attributes, :noreturn)
@@ -47,7 +47,7 @@ end
                 push!(copysetfn.function_attributes, LLVM.EnumAttribute(:alwaysinline))
             end
             ity = convert(LLVM.LLVMType, Int)
-            jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
+            jlvaluet = convert(LLVM.LLVMType, T; allow_boxed = true)
 
             # Julia inlines this function into its caller, whose pgcstack it takes as an
             # argument to allocate the result (see `Compiler.use_gcstack_arg!`).

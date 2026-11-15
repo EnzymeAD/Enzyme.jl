@@ -1436,7 +1436,7 @@ function julia_error(
 @static if VERSION < v"1.11-"
 else   
             if isa(cur, LLVM.ConstantExpr)
-                larg, off = get_base_and_offset(cur.operands[1]; inst=first(prevbb.insert_block.instructions))
+                    larg, off = get_base_and_offset(cur.operands[1]; inst = first(prevbb.insert_block.instructions))
                     legal2, obj = absint(larg, enzyme_ctx)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
@@ -1445,7 +1445,7 @@ else
             end
 
             if isa(cur, LLVM.LoadInst)
-                larg, off = get_base_and_offset(cur.operands[1]; inst=cur)
+                    larg, off = get_base_and_offset(cur.operands[1]; inst = cur)
                     legal2, obj = absint(larg, enzyme_ctx)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)

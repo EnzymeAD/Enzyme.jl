@@ -1652,7 +1652,7 @@ end
         shadowin = if !is_constant_value(gutils, orig.operands[1])
             invert_pointer(gutils, orig.operands[1], B)
         else
-            estr = "Mismatched activity for: " * string(orig) * " const input " *string(orig.operands[1]) * ", differentiable return"
+            estr = "Mismatched activity for: " * string(orig) * " const input " * string(orig.operands[1]) * ", differentiable return"
             eres = julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, orig.operands[1].ref, B.ref, enzyme_ctx)
             if eres != C_NULL
                 LLVM.Value(eres)

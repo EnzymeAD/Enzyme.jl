@@ -3292,9 +3292,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                 if length(collect(fn.parameters)) >= idx && any(
                         (
 
-                                (attr.kind == sretkind && any_jltypes(attr.value)) ||
+                            (attr.kind == sretkind && any_jltypes(attr.value)) ||
                                 attr.kind == "enzymejl_returnRoots"
-                            ) for attr in collect(fn.parameter_attributes[idx])
+                        ) for attr in collect(fn.parameter_attributes[idx])
                     )
                     if !isempty(fn.blocks)
                         B = IRBuilder()
@@ -3335,7 +3335,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             attrs = collect(fn.parameter_attributes[idx])
             if any(
                     (
-                            attr.kind == sretkind ||
+                        attr.kind == sretkind ||
                             attr.kind == "enzyme_sret" ||
                             attr.kind == "enzyme_sret_v"
                     ) for attr in attrs

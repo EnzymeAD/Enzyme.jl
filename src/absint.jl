@@ -487,7 +487,7 @@ function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::B
         opc = val.opcode
         if opc == LLVM.Opcode.Select
             return is_multiple_of(val.operands[2], sz, stride) &&
-                   is_multiple_of(val.operands[3], sz, stride)
+                is_multiple_of(val.operands[3], sz, stride)
         elseif opc == LLVM.Opcode.Add || opc == LLVM.Opcode.Sub
             # e.g. `add (mul %i, sz), -sz`, as produced when LLVM folds the
             # 1-based `(i - 1) * sz` memoryref offset.
