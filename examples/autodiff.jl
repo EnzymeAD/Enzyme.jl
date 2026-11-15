@@ -138,7 +138,7 @@ grad(x, dx, y, dy)
 # `dx` now contains the gradient
 dx
 
-# To compute the hessian, we need to take the dervative of this gradient function at every input.
+# To compute the hessian, we need to take the derivative of this gradient function at every input.
 # Following the same seeding strategy as before, we now seed both
 # in the `vx[1] = [1.0, 0.0]` and `vx[2] = [0.0, 1.0]` direction.
 # These tuples have to be put into a `BatchDuplicated` type.

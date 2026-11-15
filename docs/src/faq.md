@@ -553,7 +553,7 @@ julia> conj(grad_u)
 
 In the case of a scalar-input scalar-output function, that's sufficient. However, most of the time one uses reverse mode, it involves either several inputs or outputs, perhaps via memory. This case requires additional handling to properly sum all the partial derivatives from the use of each input and apply the conjugate operator at only the ones relevant to the differential return.
 
-For simplicity, Enzyme provides a helper utlity `ReverseHolomorphic` which performs Reverse mode properly here, assuming that the function is indeed holomorphic and thus has a well-defined single derivative.
+For simplicity, Enzyme provides a helper utility `ReverseHolomorphic` which performs Reverse mode properly here, assuming that the function is indeed holomorphic and thus has a well-defined single derivative.
 
 ```jldoctest complex
 julia> Enzyme.autodiff(ReverseHolomorphic, f, Active, Active(z))[1][1]

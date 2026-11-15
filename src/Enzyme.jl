@@ -404,16 +404,16 @@ Limitations:
 
 * `f` may only return a `Real` (of a built-in/primitive type) or `nothing`,
   not an array, struct, `BigFloat`, etc. To handle vector-valued return
-  types, use a mutating `f!` that returns `nothing` and stores it's return
+  types, use a mutating `f!` that returns `nothing` and stores its return
   value in one of the arguments, which must be wrapped in a
   [`Duplicated`](@ref).
 
-* `args` may be numbers, arrays, structs of numbers, structs of arrays and so
-  on. Enzyme will only differentiate in respect to arguments that are wrapped
-  in an [`Active`](@ref) (for arguments whose derivative result must be returned
-  rather than mutated in place, such as primitive types and structs thereof)
-  or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
-  thereof).
+`args` may be numbers, arrays, structs of numbers, structs of arrays and so
+on. Enzyme will only differentiate in respect to arguments that are wrapped
+in an [`Active`](@ref) (for arguments whose derivative result must be returned
+rather than mutated in place, such as primitive types and structs thereof)
+or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
+thereof).
 
 `Activity` is the Activity of the return value, it may be `Const` or `Active`.
 
@@ -682,7 +682,7 @@ returning just the derivative.
 ```jldoctest
 julia> f(x) = x*x;
 
-julia> res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
+julia> ∂f_∂x, res = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
 (6.28, 9.8596)
 
 julia> ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))

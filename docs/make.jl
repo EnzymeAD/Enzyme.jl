@@ -59,7 +59,7 @@ end
 makedocs(;
     modules=[Enzyme, EnzymeCore, EnzymeTestUtils],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
-    repo=GitHub("EnzymeAD/Enzyme.jl"),
+    repo = GitHub("EnzymeAD/Enzyme.jl"),
     sitename="Enzyme.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",

@@ -176,12 +176,13 @@ Function to compute transport.
 
 ### Arguments
 - `rho`: the density vector
+- `params`: the `ModelParameters` of the box model
 
 ### Returns
 - `U`: transport value
 """
 function compute_transport(rho, params)
-    (; delta,  u0) = params
+    (; delta, u0) = params
     U = u0 * (rho[2] - (delta * rho[1] + (1 - delta) * rho[3]))
     return U
 end
@@ -193,6 +194,7 @@ Function to compute density.
 
 ### Arguments
 - `state`: vector of `[T1; T2; T3; S1; S2; S3]`
+- `params`: the `ModelParameters` of the box model
 
 ### Returns
 - `rho`
@@ -211,13 +213,14 @@ end
 Compute the state update.
 
 ### Arguments
-- `state_now` = [T1(t), T2(t), ..., S3(t)]
-- `state_old` = [T1(t-dt), ..., S3(t-dt)]
-- `u` = transport(t)
-- `dt` = time step
+- `state_now`: the current state `[T1(t), T2(t), ..., S3(t)]`
+- `state_old`: the previous state `[T1(t-dt), ..., S3(t-dt)]`
+- `u`: the transport at time `t`
+- `params`: the `ModelParameters` of the box model
+- `dt`: the time step
 
 ### Returns
-- `state_new`: [T1(t+dt), ..., S3(t+dt)]
+- `state_new`: the next state `[T1(t+dt), ..., S3(t+dt)]`
 """
 function compute_update(state_now, state_old, u, params, dt)
 
@@ -530,9 +533,6 @@ dstate_old[5]
 ## unperturbed final state
 use_to_check = states_after_smoother[M + 1]
 
-initial_temperature = [20.0; 1.0; 1.0]
-initial_salinity = [35.5; 34.5; 34.5]
-
 ## a loop to compute the perturbed final states
 diffs = []
 step_sizes = [1.0e-1, 1.0e-2, 1.0e-3, 1.0e-4, 1.0e-5, 1.0e-6, 1.0e-7, 1.0e-8, 1.0e-9, 1.0e-10]
@@ -540,10 +540,10 @@ for eps in step_sizes
 
     state_new_smoothed = zeros(6)
 
-    perturbed_initial_salinity = initial_salinity + [0.0; eps; 0.0]
+    perturbed_initial_salinity = Sbar + [0.0; eps; 0.0]
 
-    state_old = [initial_temperature; perturbed_initial_salinity]
-    state_now = [20.0; 1.0; 1.0; 35.5; 34.5; 34.5]
+    state_old = [Tbar; perturbed_initial_salinity]
+    state_now = [Tbar; Sbar]
 
     for t in 1:M
 

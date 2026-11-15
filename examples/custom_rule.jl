@@ -85,10 +85,7 @@ dx = [1.0, 0.0]
 y = [0.0, 0.0]
 dy = [0.0, 0.0]
 
-## function to differentiate
-g(y, x) = f(y, x)^2
-
-#-
+g(y, x) = f(y, x)^2 # function to differentiate
 
 ## derivative of g with respect to x[1]
 autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx))

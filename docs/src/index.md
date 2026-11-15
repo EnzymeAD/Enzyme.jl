@@ -184,7 +184,7 @@ julia> gradient(ForwardWithPrimal, rosenbrock_inp, [1.0, 2.0])
 (derivs = ([-400.0, 200.0],), val = 100.0)
 ```
 
-In forward mode, we can also optionally pass a chunk size to specify the number of derivatives computed simulateneously using vector forward mode.
+In forward mode, we can also optionally pass a chunk size to specify the number of derivatives computed simultaneously using vector forward mode.
 ```jldoctest rosenbrock
 julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0]; chunk=Val(1))
 ([-400.0, 200.0],)
