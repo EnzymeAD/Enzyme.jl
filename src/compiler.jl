@@ -597,7 +597,13 @@ end
 
 function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeContext)
     for (mi, k) in meta.compiled
-        k_name = GPUCompiler.safe_name(k.specfunc)
+        k.specfunc === nothing && continue
+        # GPUCompiler sanitizes the names of the functions it emits. Releases that update
+        # `meta.compiled` accordingly give the final name, which may have been uniqued
+        # (`julia___0.1`) when two names sanitize to the same one, as `julia_+_0` and
+        # `julia_-_0` do with the module-local name counters of Julia 1.14
+        # (JuliaLang/julia#60031). Older releases give the unsanitized name.
+        k_name = haskey(functions(mod), k.specfunc) ? k.specfunc : GPUCompiler.safe_name(k.specfunc)
         if !haskey(functions(mod), k_name)
             continue
         end
