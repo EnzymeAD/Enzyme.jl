@@ -1621,7 +1621,12 @@ end
         pushfirst!(args, LLVM.ConstantInt(world))
         fwd_RT = Union{}
     else
-        fwd_RT = primal_return_type_world(Forward, world, fmi)
+        mod = LLVM.parent(fn)
+        fwd_RT = native_return_type(mod, fmi, world)
+        if fwd_RT === nothing
+            interp = GPUCompiler.get_interpreter(nested_compiler_job(fmi, get_mode(gutils), world))
+            fwd_RT = return_type(interp, fmi)
+        end
     end
     
     fmi = fmi::Core.MethodInstance
@@ -1817,11 +1822,7 @@ function enzyme_custom_common_rev(
     mode = get_mode(gutils)
 
     @assert ami !== nothing
-    target = DefaultCompilerTarget()
-    params = PrimalCompilerParams(mode)
-    interp = GPUCompiler.get_interpreter(
-        CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
-    )
+    interp = GPUCompiler.get_interpreter(nested_compiler_job(ami, mode, world))
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     # The tape type comes from the augmented primal's return type. Take it
