@@ -2330,6 +2330,57 @@ function post_attr!(mod::LLVM.Module, run_attr)
     return nothing
 end
 
+# The type that the `extractvalue` indices `path` select in a value of type `ty`, or
+# `nothing` if they do not index into it.
+function extractvalue_type(ty::LLVM.LLVMType, path::Vector{Cuint})
+    for p in path
+        if ty isa LLVM.StructType
+            elts = ty.elements
+            p < length(elts) || return nothing
+            ty = elts[p + 1]
+        elseif ty isa LLVM.ArrayType
+            p < ty.length || return nothing
+            ty = ty.element_type
+        else
+            return nothing
+        end
+    end
+    return ty
+end
+
+#=
+The `extractvalue` path into a global of type `gty` that a constant GEP `gep` with a
+zero first index addresses, when its pointer operand addresses `path`, or `nothing`.
+
+With opaque pointers the GEP's source element type need not be the type at `path`:
+`gep [2 x i64], ptr @g, 0, 1` into `@g = { [2 x i64] }` addresses `[0, 1]`, not `[1]`.
+The GEP indexes the element at offset zero whose type is its source element type, so
+descend through first elements until the types agree, then append its indices.
+=#
+function gep_path(gty::LLVM.LLVMType, path::Vector{Cuint}, gep::LLVM.GetElementPtrInst)
+    ty = extractvalue_type(gty, path)
+    ty === nothing && return nothing
+    path = copy(path)
+    src = gep.source_element_type
+    while ty != src
+        if ty isa LLVM.StructType && !isempty(ty.elements)
+            ty = first(ty.elements)
+        elseif ty isa LLVM.ArrayType && ty.length > 0
+            ty = ty.element_type
+        else
+            return nothing
+        end
+        push!(path, 0)
+    end
+    for v in gep.operands[3:end]
+        idx = convert(Int64, v)
+        0 <= idx <= typemax(Cuint) || return nothing
+        push!(path, Cuint(idx))
+    end
+    extractvalue_type(gty, path) === nothing && return nothing
+    return path
+end
+
 function prop_global!(g::LLVM.GlobalVariable)
     newfns = String[]
     changed = false
@@ -2379,21 +2430,11 @@ function prop_global!(g::LLVM.GlobalVariable)
         if isa(var, LLVM.GetElementPtrInst)
             if all(isa(v, LLVM.ConstantInt) for v in var.operands[2:end])
                 if LLVM.isnull(var.operands[2])
-                    for u in var.users
-                        push!(
-                            todo,
-                            (
-                                vcat(
-                                    path,
-                                    collect(
-                                        (
-                                            convert(Cuint, v) for v in var.operands[3:end]
-                                        )
-                                    ),
-                                ),
-                                u,
-                            ),
-                        )
+                    newpath = gep_path(g.global_value_type, path, var)
+                    if newpath !== nothing
+                        for u in var.users
+                            push!(todo, (newpath, u))
+                        end
                     end
                 end
                 continue

@@ -1170,3 +1170,46 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+# With opaque pointers a constant GEP into a global need not use the global's type:
+# `prop_global!` must find the element the GEP addresses instead of reading its indices
+# as a path from the global's type. See https://github.com/EnzymeAD/Enzyme.jl/pull/3957
+@testset "prop_global! GEP with another source element type" begin
+    LLVM.Context(; opaque_pointers = true) do ctx
+        mod = parse(
+            LLVM.Module, """
+            @g = private unnamed_addr constant { [2 x i64] } { [2 x i64] [i64 1, i64 2] }
+            @h = private unnamed_addr constant { [2 x i64], i64 } { [2 x i64] [i64 1, i64 2], i64 3 }
+
+            define i64 @nested() {
+              %p = getelementptr inbounds [2 x i64], ptr @g, i64 0, i64 1
+              %v = load i64, ptr %p
+              ret i64 %v
+            }
+
+            define i64 @trailing() {
+              %p = getelementptr inbounds [2 x i64], ptr @h, i64 0, i64 1
+              %v = load i64, ptr %p
+              ret i64 %v
+            }
+
+            define i32 @unmatched() {
+              %p = getelementptr inbounds { i32, i32 }, ptr @g, i64 0, i32 1
+              %v = load i32, ptr %p
+              ret i32 %v
+            }
+            """
+        )
+        for g in mod.globals
+            Enzyme.Compiler.prop_global!(g)
+        end
+        @test LLVM.verify(mod) === nothing
+        retval(name) = only(only(mod.functions[name].blocks).terminator.operands)
+        # `[0, 1]` in `@g`, not the out-of-bounds field `[1]`
+        @test convert(Int, retval("nested")) == 2
+        # `[0, 1]` in `@h`, not the trailing field `[1]`
+        @test convert(Int, retval("trailing")) == 2
+        # no element of `@g` at offset zero has type `{ i32, i32 }`: left alone
+        @test retval("unmatched") isa LLVM.LoadInst
+    end
+end
