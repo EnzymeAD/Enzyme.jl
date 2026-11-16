@@ -7969,16 +7969,23 @@ const DumpLLVMCall = Ref(false)
 
             if returnRoots
                 tracked = CountTrackedPointers(jltype)
-                pushfirst!(
-                    callparams,
-                    alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots")
-                )
+                roots_ty = LLVM.ArrayType(T_prjlvalue, tracked.count)
+                roots = alloca!(builder, roots_ty, "enzyme_call.return_roots")
+                # The thunk does not always store each root (e.g. an unused tape slot).
+                # Such a root must be null. Without this store it holds stack garbage.
+                store!(builder, LLVM.null(roots_ty), roots)
+                pushfirst!(callparams, roots)
                 jltype_foralloca = if VERSION >= v"1.12"
                     strip_tracked_pointers(jltype)
                 else
                     jltype
                 end
-                pushfirst!(callparams, alloca!(builder, jltype_foralloca, "enzyme_call.sret"))
+                sret = alloca!(builder, jltype_foralloca, "enzyme_call.sret")
+                if VERSION < v"1.12"
+                    # Before 1.12 the sret buffer holds the tracked pointers.
+                    store!(builder, LLVM.null(jltype_foralloca), sret)
+                end
+                pushfirst!(callparams, sret)
             end
 
             if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
