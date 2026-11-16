@@ -49,9 +49,13 @@ end
     # Inference under the Enzyme job now sees the backend's overlay, as the primal job does.
     @test Enzyme.Compiler.return_type(interp, mi) === String
     @static if VERSION >= v"1.11.0-DEV.1552"
-        # GPUCompiler adds its shared method table below the method table of the backend.
-        @test Enzyme.Compiler.enzyme_cache_owner(backend_job).method_tables ===
+        # GPUCompiler 2 adds its shared method table below the method table of the backend.
+        expected = if isdefined(GPUCompiler, :SHARED_METHOD_TABLE)
             (mt_test_table, GPUCompiler.SHARED_METHOD_TABLE)
+        else
+            (mt_test_table,)
+        end
+        @test Enzyme.Compiler.enzyme_cache_owner(backend_job).method_tables === expected
     end
 end
 
