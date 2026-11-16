@@ -1,0 +1,44 @@
+include:
+  - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
+
+# AMDGPU tests (test/amdgpu.jl) on a MI250X GPU (one GCD) of CSCS's beverin. The script runs on the allocated node; the uenv provides
+# ROCm, Julia is an x86 build of the CI user. Enzyme, EnzymeCore and EnzymeTestUtils are developed from the checkout into the default
+# environment of a job-local depot, next to the newest AMDGPU release compatible with them. Julia 1.10 and 1.11, whose LLVM does not
+# know the MI300A (gfx942), and the current release 1.13; the MI300 pipeline (cscs-mi300.yml) runs 1.12 and 1.13.
+.mi250:
+  extends: .baremetal-runner-beverin-mi200
+  variables:
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS_PER_NODE: 1
+    SLURM_GPUS_PER_TASK: 1
+    SLURM_TIMELIMIT: '01:00:00'
+    UENV: '56ebb909a6164680'                      # prgenv-gnu/7.2.3 (ROCm 7.2.3)
+    JULIA_DEPOT_PATH: '${CI_PROJECT_DIR}/.julia'  # Job-local depot.
+    JULIA_PKG_SERVER_REGISTRY_PREFERENCE: 'eager'
+    JULIA_AMDGPU_DISABLE_ARTIFACTS: '1'           # Use the ROCm of the uenv.
+    JULIA_AMDGPU_CORE_MUST_LOAD: '1'              # Fail instead of skipping if ROCm cannot be loaded.
+    JULIA_AMDGPU_HIP_MUST_LOAD: '1'
+  script:
+    - ulimit -c 0  # No core dumps on crashes (GBs).
+    - |
+      uenv run $UENV --view=default -- $JULIA --color=yes -e '
+        using Pkg
+        Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")])
+        Pkg.add("AMDGPU")
+        Pkg.status()'
+    - uenv run $UENV --view=default -- $JULIA --color=yes test/amdgpu.jl
+
+AMDGPU julia 1.10:
+  extends: .mi250
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.10'
+
+AMDGPU julia 1.11:
+  extends: .mi250
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.11'
+
+AMDGPU julia 1.13:
+  extends: .mi250
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.13'
