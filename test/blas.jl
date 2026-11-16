@@ -19,16 +19,16 @@ using Test
 
         @testset "forward" begin
             @testset for Tret in (
-                    Const,
-                    Duplicated,
-                    DuplicatedNoNeed,
-                    BatchDuplicated,
-                    BatchDuplicatedNoNeed,
-                ),
-                Tx in (Const, Duplicated, BatchDuplicated),
-                Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 20), -2))
+                        Const,
+                        Duplicated,
+                        DuplicatedNoNeed,
+                        BatchDuplicated,
+                        BatchDuplicatedNoNeed,
+                    ),
+                    Tx in (Const, Duplicated, BatchDuplicated),
+                    Ty in (Const, Duplicated, BatchDuplicated),
+                    T in (fun == BLAS.dot ? RTs : RCs),
+                    (sz, inc) in ((10, 1), ((2, 20), -2))
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
 
@@ -41,10 +41,10 @@ using Test
 
         @testset "reverse" begin
             @testset for Tret in (Const, Active),
-                Tx in (Const, Duplicated, BatchDuplicated),
-                Ty in (Const, Duplicated, BatchDuplicated),
-                T in (fun == BLAS.dot ? RTs : RCs),
-                (sz, inc) in ((10, 1), ((2, 20), -2))
+                    Tx in (Const, Duplicated, BatchDuplicated),
+                    Ty in (Const, Duplicated, BatchDuplicated),
+                    T in (fun == BLAS.dot ? RTs : RCs),
+                    (sz, inc) in ((10, 1), ((2, 20), -2))
 
                 are_activities_compatible(Tret, Tx, Ty) || continue
 

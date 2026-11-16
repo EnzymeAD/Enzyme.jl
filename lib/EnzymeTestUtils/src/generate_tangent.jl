@@ -10,22 +10,22 @@ function map_fields_recursive(f, x::T...) where {T}
     end
     return _construct(T, new_fields...)
 end
-function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple}}
-    map(x...) do xi...
+function map_fields_recursive(f, x::T...) where {T <: Union{Array, Tuple, NamedTuple}}
+    return map(x...) do xi...
         map_fields_recursive(f, xi...)
     end
 end
-function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T<:LinearAlgebra.HermOrSym{<:Number}}
+function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T <: LinearAlgebra.HermOrSym{<:Number}}
     copyto!(x.uplo == 'U' ? UpperTriangular(parent(y)) : LowerTriangular(parent(y)), x.uplo == 'U' ? UpperTriangular(parent(x)) : LowerTriangular(parent(x)))
     return y
 end
-function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T<:AbstractFloat}
+function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T <: AbstractFloat}
     return x
 end
-function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T<:Complex}
+function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T <: Complex}
     return x
 end
-map_fields_recursive(f, x::T...) where {T<:AbstractFloat} = f(x...)
+map_fields_recursive(f, x::T...) where {T <: AbstractFloat} = f(x...)
 map_fields_recursive(f, x::Array{<:Number}...) = f(x...)
 
 rand_tangent(x) = rand_tangent(Random.default_rng(), x)
@@ -36,7 +36,7 @@ function rand_tangent(rng, x)
     v_new = rand(rng, -9:T(0.01):9, length(v))
     rand_v = from_vec(v_new)
     if x isa Number
-       return rand_v
+        return rand_v
     end
     zero_v = from_vec(zero(v))
     return map_fields_recursive(Base.copyto!, zero_v, rand_v)

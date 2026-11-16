@@ -967,7 +967,7 @@ end
         N_COLUMNS = size(out, 2)
         for i in 1:N_TIME_STEPS
             for j in 1:N_COLUMNS
-                prev = i == 1 ? 0.0 : out[i-1, j]
+                prev = i == 1 ? 0.0 : out[i - 1, j]
                 out[i, j] = prev * arg1 + arg2
             end
         end
@@ -1230,9 +1230,9 @@ end
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
         sum(
             sum(
-                    weight
+                weight
                     for (weight, mean) in zip(weights, weights)
-                )
+            )
                 for x in data
         )
     end
@@ -2012,7 +2012,8 @@ end
 @testset "Enum Autodiff" begin
     forward, reverse = Enzyme.autodiff_thunk(
         Enzyme.ReverseSplitWithPrimal, Enzyme.Const{typeof(g_enum_test)}, Enzyme.Duplicated,
-        Enzyme.Duplicated{Vector{Float64}})
+        Enzyme.Duplicated{Vector{Float64}}
+    )
 
     u0 = [1.0]
     du0 = zero(u0)
@@ -2059,11 +2060,11 @@ end
 # https://github.com/EnzymeAD/Enzyme.jl/issues/3697
 # A non-const global must be read at runtime, not folded to its compile-time value.
 module MutableGlobal3697
-counter = 5000
-@noinline function bump()
-    global counter += 1
-    return counter
-end
+    counter = 5000
+    @noinline function bump()
+        global counter += 1
+        return counter
+    end
 end
 
 mutable_global_3697(x) = x * MutableGlobal3697.bump()

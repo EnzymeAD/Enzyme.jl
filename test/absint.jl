@@ -37,7 +37,7 @@ function f_absint_memcpy!(dest, src)
             dest[i] = src[i]
         end
     end
-    nothing
+    return nothing
 end
 
 @testset "Absint Ptr/GEP memcpy translation" begin
@@ -70,16 +70,16 @@ end
 @testset "Absint Ptr/GEP of select" begin
     T = Float64
     params_dic = Ref(1.5)
-    
+
     inters = [
         PeriodicTorsion{2, Float64}(
             (2.7, 3.1),
             true
-        )
+        ),
     ]
     types = ["type1"]
     grads_enzyme = make_zero(params_dic)
-    
+
     autodiff(
         set_runtime_activity(Reverse), loss, Active,
         Duplicated(params_dic, grads_enzyme), Const(inters),
@@ -326,7 +326,7 @@ end
     dx = zero(x)
     autodiff(Reverse, absint_closure_recapture, Active, Duplicated(x, dx), Const(0.5))
     @test dx ≈ [0.5]
-end                                         
+end
 
 Base.@noinline absint_undef_barrier(f, args...; kwargs...) = f(args...; kwargs...)
 

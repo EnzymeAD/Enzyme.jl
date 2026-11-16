@@ -1,4 +1,3 @@
-
 function julia_activity_rule(f::LLVM.Function, method_table)
     if startswith(f.name, "japi3") || startswith(f.name, "japi1") || startswith(f.name, "jlcapi")
         return
@@ -40,8 +39,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     end
 
 
-
-    if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[1]
+    return if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[1]
         any_active = false
         for arg in jlargs
             if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
@@ -53,13 +51,13 @@ function julia_activity_rule(f::LLVM.Function, method_table)
             typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
             @assert typ == arg.typ
 
-	    if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))
+            if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))
                 push!(
                     f.parameter_attributes[arg.codegen.i],
                     StringAttribute("enzyme_inactive"),
                 )
-    	    else
-        		any_active = true
+            else
+                any_active = true
             end
         end
         if sret !== nothing
@@ -74,13 +72,13 @@ function julia_activity_rule(f::LLVM.Function, method_table)
                 idx += 1
             end
             if returnRoots !== nothing
-	        if !in(idx, parmsRemoved)
-		    if (VERSION < v"1.12" || guaranteed_const_nongen(RT, world))
-                    push!(
+                if !in(idx, parmsRemoved)
+                    if (VERSION < v"1.12" || guaranteed_const_nongen(RT, world))
+                        push!(
                             f.parameter_attributes[idx + 1],
-                        StringAttribute("enzyme_inactive"),
-                    )
-		    end
+                            StringAttribute("enzyme_inactive"),
+                        )
+                    end
                 end
             end
         end
@@ -91,19 +89,19 @@ function julia_activity_rule(f::LLVM.Function, method_table)
             end
         end
 
-	if !any_active && guaranteed_const_nongen(RT, world)
+        if !any_active && guaranteed_const_nongen(RT, world)
             push!(
                 f.function_attributes,
-		StringAttribute("enzyme_inactive"),
-	    )
+                StringAttribute("enzyme_inactive"),
+            )
             push!(
                 f.function_attributes,
-		StringAttribute("enzyme_nofree"),
-	    )
+                StringAttribute("enzyme_nofree"),
+            )
             push!(
                 f.function_attributes,
-		StringAttribute("enzyme_no_escaping_allocation"),
-	    )
-	end
+                StringAttribute("enzyme_no_escaping_allocation"),
+            )
+        end
     end
 end
