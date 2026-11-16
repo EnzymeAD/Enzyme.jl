@@ -86,9 +86,10 @@ function test_reverse(
         activities = map(Base.Fix1(auto_activity, rng), (f, args...))
         primals = map(get_primal, activities)
         # call primal, avoid mutating original arguments
-        fcopy = deepcopy(first(primals))
-        args_copy = deepcopy(Base.tail(primals))
-        y = fcopy(args_copy...; deepcopy(fkwargs)...)
+        copy_dict = IdDict()
+        fcopy = _deepcopy(first(primals), copy_dict)
+        args_copy = _deepcopy(Base.tail(primals), copy_dict)
+        y = fcopy(args_copy...; _deepcopy(fkwargs, copy_dict)...)
         # generate tangent for output
         if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
             ȳ = isnothing(output_tangent) ? (ret_activity <: Const ? zero_tangent(y) : rand_tangent(rng, y)) : output_tangent
