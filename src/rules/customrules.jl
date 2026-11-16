@@ -192,7 +192,7 @@ function push_box_for_argument!(
         @assert num_inline_roots == inline_roots_type(arg.typ)
     end
 
-    arty = convert(LLVMType, arg.typ; allow_boxed = true)
+    arty = llvm_type_allow_boxed(arg.typ)
 
     # if either not a bits ref, or the data was not overwritten, the data is left
     # in the primal pointer.
@@ -263,7 +263,7 @@ function push_box_for_argument!(
     # Val now currently contains the reverse pass version of BITS_VALUE data.
     # We form the boxed object to contain it.
 
-    llty = convert(LLVMType, Ty; allow_boxed = true)
+    llty = llvm_type_allow_boxed(Ty)
 
     llty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
        strip_tracked_pointers(llty)
@@ -325,7 +325,7 @@ function enzyme_custom_setup_args(
 
     actives = LLVM.Value[]
 
-    mixeds = Tuple{LLVM.Value,Type,LLVM.Value}[]
+    mixeds = Tuple{LLVM.Value, Type, LLVM.Value, Bool}[]
     uncacheable = get_uncacheable(gutils, orig)
     mode = get_mode(gutils)
 
@@ -358,6 +358,7 @@ function enzyme_custom_setup_args(
     )
 
     byval_tapes = LLVM.Value[]
+    inactive_args = inactive_arg_indices(mi.specTypes, world)
 
     for arg in jlargs
         @assert arg.cc != RemovedParam
@@ -409,8 +410,13 @@ function enzyme_custom_setup_args(
         activity_state = active_reg(arg.typ, world)
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
+        simp_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : 0) : arg.arg_jl_i
+        arg_inactive = in(simp_idx, inactive_args)
+        if arg_inactive
+            activep = API.DFT_CONSTANT
+        end
 	orig_activep = activep
-	any_active_data = mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
+        any_active_data = !arg_inactive && mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
 
         roots_activep = nothing
 
@@ -420,7 +426,7 @@ function enzyme_custom_setup_args(
 	    
 	    kwarg_inactive = isKWCall && arg.arg_jl_i == 2 && EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
 	    
-	    if kwarg_inactive
+            if kwarg_inactive || arg_inactive
                roots_activep = API.DFT_CONSTANT
             end
 
@@ -451,7 +457,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has constant non-roo
                 any_active_data = false
             end
 
-            if roots_activep != activep && !kwarg_inactive
+            if roots_activep != activep && !kwarg_inactive && !arg_inactive
                 if roots_activep == API.DFT_CONSTANT
                     runtime_activity = API.EnzymeGradientUtilsGetRuntimeActivity(gutils) != 0
                     if !runtime_activity
@@ -512,7 +518,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
         end
 
 
-        arty = convert(LLVMType, arg.typ; allow_boxed = true)
+        arty = llvm_type_allow_boxed(arg.typ)
 
         # Val will contain the literal data inside (aka bits_value), properly
         # cached from fwd to reverse.
@@ -680,7 +686,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
             shadowty = arg.typ
             mixed = false
             if width == 1
-                if any_active_data && activity_state == MixedState
+                if any_active_data && activity_state == MixedState && (arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF)
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = MixedDuplicated{arg.typ}
@@ -694,7 +700,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
                 end
             else
-                if any_active_data && activity_state == MixedState
+                if any_active_data && activity_state == MixedState && (arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF)
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = BatchMixedDuplicated{arg.typ,Int(width)}
@@ -710,13 +716,13 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
             end
 
             llty = convert(LLVMType, Ty)
-            arty = convert(LLVMType, arg.typ; allow_boxed = true)
-            iarty = convert(LLVMType, shadowty; allow_boxed = true)
+            arty = llvm_type_allow_boxed(arg.typ)
+            iarty = llvm_type_allow_boxed(shadowty)
             sarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, arty))
             siarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, iarty))
 
             if mixed
-                @assert arg.cc == GPUCompiler.BITS_REF
+                @assert arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF
             end
             
             ival = nothing
@@ -951,12 +957,19 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
 
                 if mixed
                     @assert !is_constant_value(gutils, op)
-                    @assert arg.cc == GPUCompiler.BITS_REF
+                    # A boxed argument (an immutable that is not stored inline,
+                    # e.g. one with a non-isbits Union field) has a boxed shadow,
+                    # so the `Ref` holds the pointer to it rather than its data.
+                    boxed_mixed = arg.cc == GPUCompiler.MUT_REF
                     RefTy = arg.typ
                     if width != 1
                         RefTy = NTuple{Int(width),RefTy}
                     end
-                    llrty = convert(LLVMType, RefTy)
+                    llrty = if boxed_mixed
+                        LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue))
+                    else
+                        convert(LLVMType, RefTy)
+                    end
                     RefTy = Base.RefValue{RefTy}
                     refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
                     refal = bitcast!(
@@ -966,8 +979,8 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     )
 
                     ptr_val = ival
-                    ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
-                    for idx = 1:width
+                    ival = boxed_mixed ? ptr_val : UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
+                    for idx in (boxed_mixed ? (1:0) : (1:width))
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                         ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
@@ -997,7 +1010,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
 
                     ival = refal0
-                    push!(mixeds, (ptr_val, arg.typ, refal))
+                    push!(mixeds, (ptr_val, arg.typ, refal, boxed_mixed))
                 end
 
                 @assert ival !== nothing
@@ -1115,7 +1128,7 @@ Custom rule for method return value of type $(RealRt) has mismatch between retur
 """
 		        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
 		        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
-		        return false
+                    return Const{RealRt}, false, false, origNeedsPrimal
 		    else
 			throw("Returned roots_activep ($roots_activep) != activep ($activep) arg.typ=$(RealRt) equivalent_rooted_type=$(equivalent_rooted_type(RealRt)) non_rooted_types=$(non_rooted_types(RealRt))")
 		    end
@@ -1949,7 +1962,7 @@ function enzyme_custom_common_rev(
     if forward
         if length(byval_tapes) == 0
             if needsTape
-                tapeV = LLVM.UndefValue(convert(LLVMType, TapeT; allow_boxed = true)).ref
+                tapeV = LLVM.UndefValue(llvm_type_allow_boxed(TapeT)).ref
             else
                 tapeV = C_NULL
             end
@@ -1959,7 +1972,7 @@ function enzyme_custom_common_rev(
                 push!(tapetys, value_type(v))
             end
             if needsTape
-                jltapeType = convert(LLVMType, TapeT; allow_boxed = true)
+                jltapeType = llvm_type_allow_boxed(TapeT)
                 push!(tapetys, jltapeType)
             end
             tapeV = LLVM.UndefValue(LLVM.StructType(tapetys))
@@ -2004,7 +2017,7 @@ function enzyme_custom_common_rev(
     end
 
     if !forward
-        funcTy = rev_TT.parameters[isKWCall ? 4 : 2]
+        funcTy = rev_TT.parameters[(isKWCall ? 4 : 2) + (applicablefn ? 0 : 2)]
         if needsTape
             @assert tape isa LLVM.Value
             tape_idx = 1
@@ -2074,7 +2087,7 @@ function enzyme_custom_common_rev(
                     end
                     throw(AssertionError(msg))
                 end
-                llty = convert(LLVMType, TapeT; allow_boxed = true)
+                llty = llvm_type_allow_boxed(TapeT)
 
                 # The rule takes the tape by reference as readonly nocapture, so
                 # the tape goes in a stack slot, like every argument. On 1.12+
@@ -2117,7 +2130,7 @@ function enzyme_custom_common_rev(
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
                 API.EnzymeGradientUtilsSetDiffe(gutils, orig, LLVM.null(value_type(val)), B)
             else
-                llety = convert(LLVMType, eltype(RT); allow_boxed = true)
+                llety = llvm_type_allow_boxed(eltype(RT))
         	if active_roots != 0
 		   msg2 = "Unimplemented in 1.12 (use 1.10 or 1.11): Active Return with rooted types, RT=$RT"
 		   emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError{Cstring})
@@ -2168,7 +2181,7 @@ function enzyme_custom_common_rev(
                     ],
                 )
             else
-                llety = convert(LLVMType, eltype(RT); allow_boxed = true)
+                llety = llvm_type_allow_boxed(eltype(RT))
                 pty = LLVM.LLVMType(API.EnzymeGetShadowType(width, llety))
                 ptr = bitcast!(B, al, LLVM.PointerType(pty, Derived))
             end
@@ -2462,8 +2475,8 @@ function enzyme_custom_common_rev(
 
         if aug_RT != ST
             if aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
-                if convert(LLVMType, EnzymeRules.shadow_type(aug_RT); allow_boxed = true) !=
-                   convert(LLVMType, EnzymeRules.shadow_type(ST); allow_boxed = true)
+                if llvm_type_allow_boxed(EnzymeRules.shadow_type(aug_RT)) !=
+                        llvm_type_allow_boxed(EnzymeRules.shadow_type(ST))
                     emit_error(
                         B,
                         orig,
@@ -2677,10 +2690,27 @@ function enzyme_custom_common_rev(
             idx += 1
         end
 
-        for (ptr_val, argTyp, refal) in mixeds
+        for (ptr_val, argTyp, refal, boxed_mixed) in mixeds
             RefTy = argTyp
             if width != 1
                 RefTy = NTuple{Int(width),RefTy}
+            end
+            if boxed_mixed
+                # The `Ref` holds the boxed shadow the rule left. Copy its
+                # non-pointer fields into the original boxed shadow, which is
+                # the memory the rest of the reverse pass accumulates into.
+                T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+                llargty = convert(LLVMType, argTyp)
+                curs = load!(B, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)), refal, "rules_mixed_prestore")
+                for idx in 1:width
+                    evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                    evcur = (width == 1) ? curs : extract_value!(B, curs, idx - 1)
+                    evp = bitcast!(B, evp, LLVM.PointerType(llargty, Tracked))
+                    evcur = bitcast!(B, evcur, LLVM.PointerType(llargty, Tracked))
+                    newval = load!(B, llargty, evcur, "rules_mixed_boxed_load")
+                    store_nonjl_types!(B, newval, evp)
+                end
+                continue
             end
             curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
 
