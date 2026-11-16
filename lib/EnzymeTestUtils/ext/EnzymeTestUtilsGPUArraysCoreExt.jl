@@ -98,7 +98,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
         end
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
-	x_new = Array{eltype(x_vew_new)}(undef, size(x))
+	x_new = Array{eltype(x_vec_new)}(undef, size(x))
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue

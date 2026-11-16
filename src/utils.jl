@@ -181,7 +181,7 @@ function setup_global(
     return gv
 end
 
-# This mimicks literal_pointer_val / literal_pointer_val_slot
+# This mimics literal_pointer_val / literal_pointer_val_slot
 # `insert_name_if_not_exists` puts `val` in the table of the compilation `enzyme_ctx` under a
 # name, which the code then refers to (see `insert_julia_value!`).
 function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing} = nothing, enzyme_ctx::Union{EnzymeContext, Nothing} = nothing)::LLVM.Value
