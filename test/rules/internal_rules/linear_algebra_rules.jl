@@ -581,19 +581,26 @@ end
 
 @testset "(matrix) det/logdet" begin
     @testset "forward" begin
-        @testset for RT in (Const,DuplicatedNoNeed,Duplicated,),
-                     Tx in (Const,Duplicated,)
+        @testset for RT in (Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated),
+                Tx in (Const, Duplicated, BatchDuplicated)
+            are_activities_compatible(RT, Tx) || continue
             xr = [4.0 3.0; 2.0 1.0]
             test_forward(LinearAlgebra.det, RT, (xr, Tx))
+            xr_pos = [2.0 1.0; 0.5 3.0]
+            test_forward(LinearAlgebra.logdet, RT, (xr_pos, Tx))
 
             xc = ComplexF64[4.0+0.0im 3.0; 2.0-0.0im 1.0]
             test_forward(LinearAlgebra.det, RT, (xc, Tx))
             xc = ComplexF64[4.0+0.0im 0.0; 0.0-0.0im 1.0]
             test_forward(LinearAlgebra.logdet, RT, (xc, Tx))
         end
+        A = [2.0 1.0; 0.5 3.0]
+        @test Enzyme.gradient(Forward, LinearAlgebra.det, A)[1] ≈ Enzyme.gradient(Reverse, LinearAlgebra.det, A)[1]
+        @test Enzyme.gradient(Forward, LinearAlgebra.logdet, A)[1] ≈ Enzyme.gradient(Reverse, LinearAlgebra.logdet, A)[1]
     end
     @testset "reverse" begin
-        @testset for RT in (Const, Active,), Tx in (Const, Duplicated,)
+        @testset for RT in (Const, Active), Tx in (Const, Duplicated, BatchDuplicated)
+            are_activities_compatible(RT, Tx) || continue
             x = [4.0 3.0; 2.0 1.0]
             test_reverse(LinearAlgebra.det, RT, (x, Tx))
 
