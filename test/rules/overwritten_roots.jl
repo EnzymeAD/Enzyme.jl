@@ -15,6 +15,12 @@ struct PtrInt
     k::Int
 end
 
+struct PtrFloatInt
+    data::Vector{Float64}
+    w::Float64
+    k::Int
+end
+
 const COEFFS = [1.0, 2.0, 3.0, 4.0]
 
 # --- Duplicated argument: inline part is inactive (Int only) ---
@@ -106,6 +112,64 @@ end
     @test all(da1.data .≈ expected_int(a))
     @test all(da2.data .≈ expected_int(a))
     @test [s[1] for s in seen_int] == [7, 6, 5, 4]
+end
+
+# --- MixedDuplicated argument: inline part holds an active Float64 and an Int ---
+
+red_mixed(x) = x.w * sum(x.data)
+
+const seen_mixed = Tuple{Int, Int}[]
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(red_mixed)}, ::Type{RT}, A::Annotation
+    ) where {RT}
+    ret = red_mixed(A.val)
+    return EnzymeRules.AugmentedReturn(
+        EnzymeRules.needs_primal(config) ? ret : nothing,
+        EnzymeRules.needs_shadow(config) ? zero(ret) : nothing, nothing
+    )
+end
+function EnzymeRules.reverse(
+        ::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(red_mixed)}, dret::Active, cache, A::MixedDuplicated
+    )
+    d = A.dval[]
+    push!(seen_mixed, (A.val.k, d.k))
+    d.data .+= dret.val * A.val.w
+    A.dval[] = PtrFloatInt(d.data, d.w + dret.val * sum(A.val.data), d.k)
+    return (nothing,)
+end
+
+@noinline mk_mixed(a, i) = PtrFloatInt(COEFFS[i] .* copy(a.data), a.w * i, a.k + i)
+loop_mixed(a) = (
+    s = 0.0; for i in 1:4
+        s += red_mixed(mk_mixed(a, i))
+    end; s
+)
+
+# loop_mixed(a) = sum_i (a.w * i) * COEFFS[i] * sum(a.data)
+expected_mixed_data(a) = a.w * sum(i * COEFFS[i] for i in 1:4)
+expected_mixed_w(a) = sum(i * COEFFS[i] for i in 1:4) * sum(a.data)
+
+@testset "MixedDuplicated mixed struct overwritten in loop" begin
+    for mode in (:combined, :split)
+        empty!(seen_mixed)
+        a = PtrFloatInt([1.0, 2.0, 3.0], 0.5, 3)
+        r = Ref(Enzyme.make_zero(a))
+        if mode == :combined
+            autodiff(Reverse, loop_mixed, Active, MixedDuplicated(a, r))
+        else
+            fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(loop_mixed)}, Active, MixedDuplicated{PtrFloatInt})
+            tape, _, _ = fwd(Const(loop_mixed), MixedDuplicated(a, r))
+            rev(Const(loop_mixed), MixedDuplicated(a, r), 1.0, tape)
+        end
+        da = r[]
+        @test all(da.data .≈ expected_mixed_data(a))
+        @test da.w ≈ expected_mixed_w(a)
+        @test [s[1] for s in seen_mixed] == [7, 6, 5, 4]
+        @test [s[2] for s in seen_mixed] == [7, 6, 5, 4]
+    end
 end
 
 end # module
