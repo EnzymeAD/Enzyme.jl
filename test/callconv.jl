@@ -523,3 +523,211 @@ d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0
     @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
     @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end
+
+# With `forceAnonymousTape`, Enzyme allocates the tape on the heap. The forward thunk then
+# returns the tape in an `EnzymeTapeToLoad` box. The tape of these functions starts with a null
+# pointer.
+@noinline function boxed_tape_next_coord((d, r, c), R, C)
+    if d == 1
+        return (2, r, mod1(c + 1, C))
+    elseif d == 2
+        return (3, mod1(r + 1, R), c)
+    elseif d == 3
+        return (4, r, mod1(c - 1, C))
+    elseif d == 4
+        return (1, mod1(r - 1, R), c)
+    end
+end
+
+mutable struct BoxedTapeMaybeUndef
+    v::Vector{Float64}
+    BoxedTapeMaybeUndef() = new()
+    BoxedTapeMaybeUndef(v) = new(v)
+end
+
+@noinline function boxed_tape_inner(m, y)
+    if isdefined(m, :v)
+        return @inbounds m.v[1] * y * y
+    else
+        return y * y * y
+    end
+end
+
+@noinline boxed_tape_sin(x) = sin(x)
+
+# `Tag` gives each testset its own thunks.
+struct BoxedTapeUnion{Tag} end
+function (::BoxedTapeUnion)(x, coord)
+    c2 = boxed_tape_next_coord(coord, size(x, 2), size(x, 3))
+    return x[coord...]^2 * x[c2...]
+end
+
+struct BoxedTapeUndef{Tag} end
+(::BoxedTapeUndef)(m, y) = boxed_tape_inner(m, y) * y
+
+struct BoxedTapeNoPointer{Tag} end
+(::BoxedTapeNoPointer)(x, y) = boxed_tape_sin(x) * y
+
+struct BoxedTapeEmpty{Tag} end
+(::BoxedTapeEmpty)(x) = 2 * x
+
+function boxed_tape_unstable(f, ms, y)
+    s = 0.0
+    for m in ms
+        s += f(m[], y)::Float64
+    end
+    return s
+end
+
+function test_boxed_tape_union(f::F, mode) where {F}
+    x0 = reshape(collect(1.0:16.0), 4, 2, 2)
+    for coord in ((1, 1, 1), (2, 1, 2), (4, 2, 1))
+        x = copy(x0)
+        dx = zero(x)
+        fwd, rev = autodiff_thunk(
+            mode, Const{F}, Active{Float64}, Duplicated{typeof(x)}, Const{typeof(coord)}
+        )
+        res = fwd(Const(f), Duplicated(x, dx), Const(coord))
+        tape = res[1]
+        @test tape isa Enzyme.Compiler.EnzymeTapeToLoad
+        @test typeof(tape) === EnzymeRules.tape_type(fwd)
+        c2 = boxed_tape_next_coord(coord, 2, 2)
+        if mode === ReverseSplitWithPrimal
+            @test res[2] ≈ x0[coord...]^2 * x0[c2...]
+        end
+        GC.gc()
+        rev(Const(f), Duplicated(x, dx), Const(coord), 1.0, tape)
+        expected = zero(x0)
+        expected[coord...] += 2 * x0[coord...] * x0[c2...]
+        expected[c2...] += x0[coord...]^2
+        @test dx ≈ expected
+    end
+    return nothing
+end
+
+function test_boxed_tape_undef(f::F, mode, TapeType = nothing) where {F}
+    for defined in (false, true)
+        m = defined ? BoxedTapeMaybeUndef([3.0]) : BoxedTapeMaybeUndef()
+        dm = defined ? BoxedTapeMaybeUndef([0.0]) : BoxedTapeMaybeUndef()
+        fwd, rev = if TapeType === nothing
+            autodiff_thunk(mode, Const{F}, Active{Float64}, Duplicated{BoxedTapeMaybeUndef}, Active{Float64})
+        else
+            autodiff_deferred_thunk(mode, TapeType, Const{F}, Active{Float64}, Duplicated{BoxedTapeMaybeUndef}, Active{Float64})
+        end
+        res = fwd(Const(f), Duplicated(m, dm), Active(2.0))
+        tape = res[1]
+        @test tape isa Enzyme.Compiler.EnzymeTapeToLoad
+        @test typeof(tape) === EnzymeRules.tape_type(fwd)
+        @test res[2] ≈ (defined ? 24.0 : 16.0)
+        GC.gc()
+        r = rev(Const(f), Duplicated(m, dm), Active(2.0), 1.0, tape)
+        # With an unassigned field the result is y^4, else it is v[1] * y^3.
+        @test r[1][2] ≈ (defined ? 36.0 : 32.0)
+        if defined
+            @test dm.v ≈ [8.0]
+        else
+            @test !isdefined(dm, :v)
+        end
+    end
+    return nothing
+end
+
+function test_boxed_tape_undef_batch(f::F) where {F}
+    for defined in (false, true)
+        m = defined ? BoxedTapeMaybeUndef([3.0]) : BoxedTapeMaybeUndef()
+        dm = if defined
+            (BoxedTapeMaybeUndef([0.0]), BoxedTapeMaybeUndef([0.0]))
+        else
+            (BoxedTapeMaybeUndef(), BoxedTapeMaybeUndef())
+        end
+        fwd, rev = autodiff_thunk(
+            ReverseSplitWidth(ReverseSplitWithPrimal, Val(2)), Const{F}, Active{Float64},
+            BatchDuplicated{BoxedTapeMaybeUndef, 2}, Active{Float64}
+        )
+        res = fwd(Const(f), BatchDuplicated(m, dm), Active(2.0))
+        tape = res[1]
+        @test tape isa Enzyme.Compiler.EnzymeTapeToLoad
+        GC.gc()
+        r = rev(Const(f), BatchDuplicated(m, dm), Active(2.0), (1.0, 2.0), tape)
+        @test r[1][2][1] ≈ (defined ? 36.0 : 32.0)
+        @test r[1][2][2] ≈ (defined ? 72.0 : 64.0)
+        if defined
+            @test dm[1].v ≈ [8.0]
+            @test dm[2].v ≈ [16.0]
+        end
+    end
+    return nothing
+end
+
+function test_boxed_tape_unstable(f::F) where {F}
+    ms = Any[Ref(BoxedTapeMaybeUndef()), Ref(BoxedTapeMaybeUndef([3.0]))]
+    dms = Any[Ref(BoxedTapeMaybeUndef()), Ref(BoxedTapeMaybeUndef([0.0]))]
+    r = autodiff(Reverse, boxed_tape_unstable, Active, Const(f), Duplicated(ms, dms), Active(2.0))
+    @test r[1][3] ≈ 68.0
+    @test dms[2][].v ≈ [8.0]
+    return nothing
+end
+
+function test_boxed_tape_all(tag)
+    InlineSplit = Enzyme.set_abi(ReverseSplitWithPrimal, Enzyme.InlineABI)
+    test_boxed_tape_union(BoxedTapeUnion{(tag, 1)}(), ReverseSplitWithPrimal)
+    test_boxed_tape_union(BoxedTapeUnion{(tag, 2)}(), ReverseSplitNoPrimal)
+    test_boxed_tape_union(BoxedTapeUnion{(tag, 3)}(), InlineSplit)
+    test_boxed_tape_undef(BoxedTapeUndef{(tag, 1)}(), ReverseSplitWithPrimal)
+    test_boxed_tape_undef(BoxedTapeUndef{(tag, 2)}(), InlineSplit)
+    f = BoxedTapeUndef{(tag, 3)}()
+    TapeType = Enzyme.tape_type(
+        ReverseSplitWithPrimal, Const{typeof(f)}, Active{Float64},
+        Duplicated{BoxedTapeMaybeUndef}, Active{Float64}
+    )
+    @test TapeType <: Enzyme.Compiler.EnzymeTapeToLoad
+    test_boxed_tape_undef(f, ReverseSplitWithPrimal, TapeType)
+    test_boxed_tape_undef_batch(BoxedTapeUndef{(tag, 4)}())
+    test_boxed_tape_unstable(BoxedTapeUndef{(tag, 5)}())
+    return nothing
+end
+
+function test_boxed_tape_no_pointer(f::F, boxed::Bool) where {F}
+    fwd, rev = autodiff_thunk(
+        ReverseSplitWithPrimal, Const{F}, Active{Float64}, Active{Float64}, Active{Float64}
+    )
+    @test (EnzymeRules.tape_type(fwd) <: Enzyme.Compiler.EnzymeTapeToLoad) == boxed
+    res = fwd(Const(f), Active(2.0), Active(3.0))
+    tape = res[1]
+    @test typeof(tape) === EnzymeRules.tape_type(fwd)
+    GC.gc()
+    r = rev(Const(f), Active(2.0), Active(3.0), 1.0, tape)
+    @test r[1][1] ≈ 3 * cos(2.0)
+    @test r[1][2] ≈ sin(2.0)
+    return nothing
+end
+
+function test_boxed_tape_empty(f::F) where {F}
+    for mode in (ReverseSplitWithPrimal, ReverseSplitNoPrimal)
+        fwd, rev = autodiff_thunk(mode, Const{F}, Active{Float64}, Active{Float64})
+        @test !(EnzymeRules.tape_type(fwd) <: Enzyme.Compiler.EnzymeTapeToLoad)
+        res = fwd(Const(f), Active(2.0))
+        tape = res[1]
+        @test typeof(tape) === EnzymeRules.tape_type(fwd)
+        r = rev(Const(f), Active(2.0), 1.0, tape)
+        @test r[1][1] ≈ 2.0
+    end
+    return nothing
+end
+
+@testset "Boxed tape" begin
+    @testset "Default" begin
+        test_boxed_tape_no_pointer(BoxedTapeNoPointer{:default}(), false)
+        test_boxed_tape_empty(BoxedTapeEmpty{:default}())
+    end
+    @testset "forceAnonymousTape" begin
+        Enzyme.Compiler.ForceAnonymousTape[] = true
+        try
+            test_boxed_tape_all(:core)
+            test_boxed_tape_no_pointer(BoxedTapeNoPointer{:core}(), true)
+            test_boxed_tape_empty(BoxedTapeEmpty{:core}())
+        finally
+            Enzyme.Compiler.ForceAnonymousTape[] = false
+        end
+    end
+end

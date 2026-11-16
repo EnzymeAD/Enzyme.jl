@@ -2391,10 +2391,47 @@ function julia_sanitize(
     return val.ref
 end
 
+# A box that holds the tape of a split-mode thunk.
+# Enzyme allocates this box when it puts the tape on the heap (`forceAnonymousTape`).
 mutable struct EnzymeTapeToLoad{T}
     data::T
 end
 Base.eltype(::EnzymeTapeToLoad{T}) where {T} = T
+Base.eltype(::Type{EnzymeTapeToLoad{T}}) where {T} = T
+# The box is a GC object. Code that stores tapes must keep the box in GC-tracked memory.
+@inline any_jltypes(::Type{<:EnzymeTapeToLoad}) = true
+
+# When this switch is set, Enzyme allocates the tape of each new top-level split-mode thunk on
+# the heap (`forceAnonymousTape`). Use this switch only in tests.
+const ForceAnonymousTape = Ref(false)
+
+# The tape of an augmented forward pass.
+struct AugmentedTape
+    # Julia type of the tape that the forward thunk returns.
+    TapeType::Type
+    # LLVM type of the tape that the reverse pass takes by value. `nothing` if there is no tape.
+    lltape::Union{Nothing, LLVM.LLVMType}
+end
+
+function AugmentedTape(augmented)
+    tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+    utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
+    if utape != C_NULL
+        # Enzyme allocated the tape on the heap. The forward pass returns the pointer.
+        # For an empty tape there is no allocation, and the pointer is null.
+        lltape = LLVM.LLVMType(utape)
+        TT = Compiler.tape_type(lltape)
+        if isghostty(TT)
+            return AugmentedTape(TT, lltape)
+        end
+        return AugmentedTape(EnzymeTapeToLoad{TT}, lltape)
+    elseif tape != C_NULL
+        lltape = LLVM.LLVMType(tape)
+        return AugmentedTape(Compiler.tape_type(lltape), lltape)
+    else
+        return AugmentedTape(Cvoid, nothing)
+    end
+end
 
 # See get_current_task_from_pgcstack (used from 1.7+)
 current_task_offset() =
@@ -3066,6 +3103,10 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
             N = convert(Int, Count)
 
             ETT = N == 1 ? TT : NTuple{N,TT}
+            if IsDefault != 0 && N == 1
+                # This allocation is the box of a tape. Julia code sees the box as `EnzymeTapeToLoad`.
+                ETT = EnzymeTapeToLoad{TT}
+            end
             if sizeof(ETT) != N * convert(Int, AlignedSize)
                 GPUCompiler.@safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(
                     ETT,
@@ -3655,7 +3696,7 @@ function enzyme!(
             typeInfo,
             uncacheable_args,
             nowrite_shadows,
-            false,
+                ForceAnonymousTape[], #=forceAnonymousTape=#
             runtimeActivity,
             strongZero,
             width,
@@ -3665,16 +3706,9 @@ function enzyme!(
         # 2. get new_primalf and tape
         augmented_primalf =
             LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
-        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
-        if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
-            tape = utape
-        elseif tape != C_NULL
-            TapeType = Compiler.tape_type(LLVMType(tape))
-        else
-            TapeType = Cvoid
-        end
+            augtape = AugmentedTape(augmented)
+            TapeType = augtape.TapeType
+            tape = augtape.lltape === nothing ? C_NULL : augtape.lltape.ref
         if expectedTapeType !== UnknownTapeType
             @assert expectedTapeType === TapeType
         end
@@ -4060,16 +4094,8 @@ function create_abi_wrapper(
             tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         end
 
-        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
-        if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
-        elseif tape != C_NULL
-            TapeType = Compiler.tape_type(LLVMType(tape))
-        else
-            TapeType = Cvoid
-        end
-        push!(sret_types, TapeType)
+        augtape = AugmentedTape(augmented)
+        push!(sret_types, augtape.TapeType)
 
         # primal return
         if existed[2] != 0
@@ -4182,22 +4208,21 @@ function create_abi_wrapper(
         end
     end
 
+    ghost_tape = false
     if needs_tape
-        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
-        if utape != C_NULL
-            tape = utape
-        end
-        if tape != C_NULL
-            tape = LLVM.LLVMType(tape)
+        tape = AugmentedTape(augmented).lltape
+        if tape === nothing
+            needs_tape = false
+        elseif isghostty(Compiler.tape_type(tape))
+            # The caller does not pass an empty tape.
+            ghost_tape = true
+        else
             jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
             push!(T_wrapperargs, jltape)
             arg_roots = inline_roots_type(tape)
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
             end
-        else
-            needs_tape = false
         end
     end
 
@@ -4447,7 +4472,9 @@ function create_abi_wrapper(
         i += 1
     end
 
-    if needs_tape
+    if needs_tape && ghost_tape
+        push!(realparms, LLVM.null(tape))
+    elseif needs_tape
         # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
         # and that Bool -> i8, not i1
         tparm = params[i]
@@ -4486,6 +4513,10 @@ function create_abi_wrapper(
         end
         returnNum = 0
         for i = 1:3
+            if i == 1 && isghostty(sret_types[i])
+                # An empty tape has no data.
+                continue
+            end
             if existed[i] != 0
                 eval = val
                 if data[i] != -1
@@ -5198,7 +5229,7 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
        else
 	   LLVM.PointerType(eltype(value_type(dst)), 11)
        end
-       dst = addrspacecast!(builder, PT2, dst)
+        dst = addrspacecast!(builder, dst, PT2)
     end
 
     while length(todo) != 0
@@ -5261,7 +5292,7 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
        else
 	   LLVM.PointerType(eltype(value_type(dst)), 11)
        end
-       dst = addrspacecast!(builder, PT2, dst)
+        dst = addrspacecast!(builder, dst, PT2)
     end
 
     while length(todo) != 0
@@ -5317,7 +5348,7 @@ function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
        else
 	   LLVM.PointerType(eltype(value_type(dst)), 11)
        end
-       dst = addrspacecast!(builder, PT2, dst)
+        dst = addrspacecast!(builder, dst, PT2)
     end
     
     if addrspace(value_type(src)) == 10
@@ -8242,6 +8273,7 @@ const DumpLLVMCall = Ref(false)
                         tape,
                         LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))),
                     )
+                    tape = addrspacecast!(builder, tape, LLVM.PointerType(llty, Derived))
                     tape = load!(builder, llty, tape)
                     API.SetMustCache!(tape)
                     callparams[end] = tape
