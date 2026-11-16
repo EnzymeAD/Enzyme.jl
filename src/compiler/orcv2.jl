@@ -113,6 +113,16 @@ function setup_globals()
         jit[] = CompilerInstance(lljit, jd_main, nothing, nothing)
     end
 
+    # Mint a fresh non-zero session identifier for this process's JIT so that any
+    # `PrecompiledThunkPtr` loaded from a package image (or left over from precompilation)
+    # sees `p.session != SESSION_ID[]` and compiles into the live JIT on first call.
+    h = ccall(:jl_hrtime, UInt64, ()) ⊻ (UInt64(ccall(:uv_os_getpid, Cint, ())) << 32) ⊻
+        UInt64(reinterpret(UInt, pointer_from_objref(lljit)))
+    h = (h ⊻ (h >> 30)) * 0xbf58476d1ce4e5b9
+    h = (h ⊻ (h >> 27)) * 0x94d049bb133111eb
+    h = h ⊻ (h >> 31)
+    Compiler.SESSION_ID[] = h | UInt64(1)
+
     jd_main, lljit
 end
 
