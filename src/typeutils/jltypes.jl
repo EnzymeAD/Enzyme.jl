@@ -102,7 +102,7 @@ function inline_roots_type(@nospecialize(T::Type))::Int
     end
 end
 
-function non_rooted_types(@nospecialize(typ::DataType))    
+function non_rooted_types(@nospecialize(typ::DataType))
     lRT = convert(LLVMType, typ)
     tracked = CountTrackedPointers(lRT)
     @assert !tracked.derived
@@ -114,9 +114,9 @@ function non_rooted_types(@nospecialize(typ::DataType))
     todo = DataType[typ]
     while length(todo) != 0
         cur = popfirst!(todo)
-    
+
         desc = Base.DataTypeFieldDesc(cur)
-         
+
         next = DataType[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
@@ -149,7 +149,7 @@ function non_rooted_types(@nospecialize(typ::DataType))
     return inners
 end
 
-function equivalent_rooted_type(@nospecialize(typ::DataType))    
+function equivalent_rooted_type(@nospecialize(typ::DataType))
     lRT = convert(LLVMType, typ)
     tracked = CountTrackedPointers(lRT)
     @assert !tracked.derived
@@ -165,9 +165,9 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
             push!(inners, cur)
             continue
         end
-    
+
         desc = Base.DataTypeFieldDesc(cur)
-                
+
         next = Tuple{Type,Bool}[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
@@ -322,7 +322,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
 
     codegen_i += 1
     orig_i += 1
-    
+
     return (orig_i, codegen_i, last_cc)
 end
 

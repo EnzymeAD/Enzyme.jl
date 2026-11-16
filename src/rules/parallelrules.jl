@@ -173,7 +173,7 @@ function (st::ReversePFor{ThunkTy, FT, AnyJL, byRef, TT})(tid) where {ThunkTy, F
     else
         @inbounds st.tapes[tid]
     end
-    
+
     if byRef
         st.thunk(Const(referenceCaller), st.ft, Const(tid), tres)
     else
@@ -295,7 +295,7 @@ end
 	    end
 	end
     end
-  
+
     pdupClosure = dupClosure
 
     subfunc = nothing
@@ -479,10 +479,10 @@ end
         llty = convert(LLVMType, dfuncT)
 
 	num_arg_roots = inline_roots_type(llty)
-        
+
 	alloctx = LLVM.IRBuilder()
         position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-        
+
         llty_foralloca = if VERSION >= v"1.12" && num_arg_roots != 0
             strip_tracked_pointers(llty)
         else
@@ -497,9 +497,9 @@ end
         if !isghostty(ppfuncT)
             v = new_from_original(gutils, operands(orig)[1])
             pllty = convert(LLVMType, ppfuncT)
-	    
+
             pv = nothing
-                
+
 	    fwdbuilder = if mode == API.DEM_ReverseModeGradient
 	       B2 = LLVM.IRBuilder()
 	       position!(B2, new_from_original(gutils, orig))
@@ -507,7 +507,7 @@ end
 	    else
 	       B
 	    end
-	    
+
             if value_type(v) != pllty
                 if boxed
                     v = addrspacecast!(fwdbuilder, v, LLVM.PointerType(pllty, Derived))
@@ -515,7 +515,7 @@ end
                 pv = v
                 v = load!(fwdbuilder, pllty, v)
             end
-	    
+
             if !boxed && inline_roots_type(ppfuncT) != 0
 		v2 = new_from_original(gutils, operands(orig)[2])
 		v = recombine_value!(fwdbuilder, v, v2)
@@ -532,7 +532,7 @@ end
         if refed
             val0 = val = emit_allocobj!(B, pfuncT)
             val = bitcast!(B, val, LLVM.PointerType(pllty, addrspace(value_type(val))))
-            val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived)) 
+            val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived))
 
 	        if !(pv isa Nothing)
                 push!(copies, (pv, val, pllty))
@@ -553,21 +553,21 @@ end
             al,
             [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)],
         )
-	    
+
         if al2 !== nothing
            extract_roots_from_value!(B, val0, al2)
            T_jlvalue = LLVM.StructType(LLVMType[])
            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
            al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(value_type(val0)).count)])
         end
-            
+
         store!(B, val0, ptr)
 
         if pdupClosure
 
             if !isghostty(ppfuncT)
                 dv = invert_pointer(gutils, operands(orig)[1], B)
-                   
+
 		fwdbuilder = if mode == API.DEM_ReverseModeGradient
 		     B2 = LLVM.IRBuilder()
 		     position!(B2, new_from_original(gutils, orig))
@@ -575,10 +575,10 @@ end
 		   else
 		     B
 		   end
-	        
+
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
-	        
+
                 dv2 = if !boxed && inline_roots_type(ppfuncT) != 0
                    invert_pointer(gutils, operands(orig)[2], B)
                 end
@@ -630,7 +630,7 @@ end
                         dv = shadowres
                     end
                 end
-                
+
                 if mode == API.DEM_ReverseModeGradient
                     dv = lookup_value(gutils, dv, B)
                 end
@@ -675,7 +675,7 @@ end
                     LLVM.ConstantInt(LLVM.IntType(32), 1),
                 ],
             )
-	
+
 	    if al2 !== nothing
 	       extract_roots_from_value!(B, dval0, al3)
 	    end
@@ -685,7 +685,7 @@ end
         al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
         push!(vals, al)
-        
+
 	if num_arg_roots != 0
 	  push!(vals, al2)
 

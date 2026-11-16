@@ -2045,7 +2045,7 @@ function generic_setup(
           throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
        end
     end
-    
+
     cal = emit_apply_generic!(B, vals)
 
     debug_from_orig!(gutils, cal, orig)

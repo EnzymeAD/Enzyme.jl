@@ -111,7 +111,7 @@ end
 #     end
 #     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 # end
-# 
+#
 # function EnzymeRules.reverse(
 #         config::EnzymeRules.RevConfig,
 #         func::Const{typeof(pointer)},

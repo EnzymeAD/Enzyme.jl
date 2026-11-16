@@ -140,10 +140,10 @@ end
 @testset "Sparse mul! with aliased shadow (primal corruption)" begin
     p = [1.0, 2.0]
     dp_sparse = Enzyme.make_zero(p)
-    
+
     # Before the fix, this would corrupt U_sparse_test.A1.nzval and produce wrong gradients.
     Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Reverse), f_sparse_test, Active, Duplicated(p, dp_sparse))
-    
+
     @test dp_sparse ≈ [-0.94, 0.53]
     @test U_sparse_test.A1.nzval == [1.0]
 end

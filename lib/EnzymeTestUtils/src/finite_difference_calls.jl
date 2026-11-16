@@ -78,7 +78,7 @@ function j′vp(fdm, f_vec, ȳ, x)
         end
   result = zero(x)
   for i in 1:length(ȳ)
-    tp = @inbounds ȳ[i] 
+    tp = @inbounds ȳ[i]
     if isfinite(tp) && !iszero(tp)
       result .+= mat[:, i] .* tp
     end
