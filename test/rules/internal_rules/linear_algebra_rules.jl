@@ -72,6 +72,52 @@ using Test
         test2!,
         Enzyme.Duplicated(A, dA),
     )
+
+    @testset "forward \\ (#2548)" begin
+        for T in (Float64, ComplexF64),
+                RT in (Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated),
+                TA in (Const, Duplicated, BatchDuplicated),
+                Tb in (Const, Duplicated, BatchDuplicated)
+            are_activities_compatible(RT, TA, Tb) || continue
+            A_f = randn(T, 3, 3) + 3I
+            b_vec = randn(T, 3)
+            b_mat = randn(T, 3, 2)
+            test_forward(\, RT, (A_f, TA), (b_vec, Tb))
+            test_forward(\, RT, (A_f, TA), (b_mat, Tb))
+        end
+    end
+end
+
+@testset "Matrix inv (#2260)" begin
+    for T in (Float64, ComplexF64)
+        A = randn(T, 3, 3) + 3I
+        for RT in (Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated),
+                TA in (Const, Duplicated, BatchDuplicated)
+            are_activities_compatible(RT, TA) || continue
+            test_forward(inv, RT, (A, TA))
+        end
+        for RT in (Const, Duplicated, BatchDuplicated),
+                TA in (Const, Duplicated, BatchDuplicated)
+            are_activities_compatible(RT, TA) || continue
+            test_reverse(inv, RT, (A, TA))
+        end
+    end
+end
+
+@testset "Nested forward jacobian with \\ (#2548)" begin
+    function residual_2548(x, p)
+        return [p[1] - x[1] - x[2], p[2] + x[2] / 3.0]
+    end
+    function outer_2548(p)
+        x = [1.0, 1.0]
+        J = Enzyme.jacobian(Enzyme.ForwardWithPrimal, residual_2548, x, Const(p))
+        x = x .- (J.derivs[1] \ J.val)
+        return x
+    end
+    p = [0.5, -0.3]
+    J_outer = Enzyme.jacobian(Enzyme.ForwardWithPrimal, outer_2548, p)
+    @test J_outer.val ≈ [0.5 - 0.9, 0.9]
+    @test J_outer.derivs[1] ≈ [1.0 3.0; 0.0 -3.0]
 end
 
 function tr_solv(A, B, uplo, trans, diag, idx)

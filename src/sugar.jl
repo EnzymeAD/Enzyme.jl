@@ -475,6 +475,10 @@ end
     end
 end
 
+EnzymeRules.inactive_noinl(::typeof(onehot), args...) = nothing
+EnzymeRules.inactive_noinl(::typeof(chunkedonehot), args...) = nothing
+EnzymeRules.inactive_noinl(::typeof(create_shadows), args...) = nothing
+
 # The shape is a field rather than a type parameter: it is only known at runtime, so as a type
 # parameter every construction would build a new type dynamically.
 struct TupleArray{T, Length, N} <: AbstractArray{T, N}
