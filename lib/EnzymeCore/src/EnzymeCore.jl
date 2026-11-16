@@ -3,7 +3,7 @@ module EnzymeCore
 export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
-export MixedDuplicated, BatchMixedDuplicated
+export MixedDuplicated, BatchMixedDuplicated, MixedDuplicatedPtr, BatchMixedDuplicatedPtr
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
@@ -240,6 +240,57 @@ end
 BatchMixedDuplicated(x::T, dx::NTuple{N, Base.RefValue{T}}, check::Bool = true) where {T, N} = BatchMixedDuplicated{T, N}(x, dx, check)
 @inline batch_size(::BatchMixedDuplicated{T, N}) where {T, N} = N
 @inline batch_size(::Type{BatchMixedDuplicated{T, N}}) where {T, N} = N
+
+# TODO: On the next breaking release of EnzymeCore, fold `MixedDuplicatedPtr` and
+# `BatchMixedDuplicatedPtr` into `MixedDuplicated{T, S}` and `BatchMixedDuplicated{T, N, S}`,
+# parametric on the shadow type.
+
+"""
+    MixedDuplicatedPtr(x::T, ∂f_∂x::Union{Ptr{T}, Core.LLVMPtr{T}})
+
+Like [`MixedDuplicated`](@ref), except the shadow is a pointer to `T`-sized memory instead
+of a `Base.RefValue{T}`. For example `pointer(A)` of a one-element GPU array `A` in device
+code. The derivative of `x` is accumulated in place, with atomic updates on GPU targets,
+so many threads can share one shadow.
+
+Requires `isbitstype(T)`. The caller keeps the memory alive. The shadow is not checked for
+congruency.
+
+!!! note
+    On the next breaking release of EnzymeCore this will be folded into
+    [`MixedDuplicated`](@ref), as a `MixedDuplicated` with a pointer shadow type.
+"""
+struct MixedDuplicatedPtr{T, P <: Union{Ptr{T}, Core.LLVMPtr{T}}} <: Annotation{T}
+    val::T
+    dval::P
+    @inline function MixedDuplicatedPtr(x::T, dx::P) where {T, P <: Union{Ptr{T}, Core.LLVMPtr{T}}}
+        isbitstype(T) || throw_pointer_shadow_error(T)
+        return new{T, P}(x, dx)
+    end
+end
+
+@noinline throw_pointer_shadow_error(T) = throw(ArgumentError("A pointer shadow requires an isbits type, got $T"))
+
+"""
+    BatchMixedDuplicatedPtr(x::T, ∂f_∂xs::NTuple{N, <:Union{Ptr{T}, Core.LLVMPtr{T}}})
+
+Like [`MixedDuplicatedPtr`](@ref), with one shadow pointer per batch lane. Each lane must
+point to separate `T`-sized memory.
+
+!!! note
+    On the next breaking release of EnzymeCore this will be folded into
+    [`BatchMixedDuplicated`](@ref), as a `BatchMixedDuplicated` with a pointer shadow type.
+"""
+struct BatchMixedDuplicatedPtr{T, N, P <: Union{Ptr{T}, Core.LLVMPtr{T}}} <: Annotation{T}
+    val::T
+    dval::NTuple{N, P}
+    @inline function BatchMixedDuplicatedPtr(x::T, dx::NTuple{N, P}) where {T, N, P <: Union{Ptr{T}, Core.LLVMPtr{T}}}
+        isbitstype(T) || throw_pointer_shadow_error(T)
+        return new{T, N, P}(x, dx)
+    end
+end
+@inline batch_size(::BatchMixedDuplicatedPtr{T, N}) where {T, N} = N
+@inline batch_size(::Type{<:BatchMixedDuplicatedPtr{T, N}}) where {T, N} = N
 
 """
     abstract type ABI

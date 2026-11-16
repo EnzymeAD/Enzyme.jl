@@ -600,6 +600,28 @@ end
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
+# A `MixedDuplicatedPtr` is lowered like a `MixedDuplicated`, but with a pointer shadow.
+const AnyMixedDuplicated = Union{MixedDuplicated, MixedDuplicatedPtr}
+const AnyBatchMixedDuplicated = Union{BatchMixedDuplicated, BatchMixedDuplicatedPtr}
+
+"""
+    mixed_shadow_pointer(T::Type{<:Union{AnyMixedDuplicated, AnyBatchMixedDuplicated}})
+
+The pointer type of the shadow(s) of the annotation `T`, or `nothing` if a shadow is a
+`Base.RefValue`.
+
+The ABI passes a `RefValue` shadow as a tracked object, and a pointer shadow as the raw
+pointer.
+"""
+function mixed_shadow_pointer(@nospecialize(T::Type))
+    if T <: MixedDuplicatedPtr
+        return T.parameters[2]
+    elseif T <: BatchMixedDuplicatedPtr
+        return T.parameters[3]
+    end
+    return nothing
+end
+
 @inline function is_memory_instance(@nospecialize(obj))
    @static if VERSION < v"1.11"
 	return false
