@@ -30,10 +30,18 @@ function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: Union{Abstr
     return nothing
 end
 
-const StridedSubArray{T,N,I<:Tuple{Vararg{Union{Base.RangeIndex, Base.ReshapedUnitRange,
-                                            Base.AbstractCartesianIndex}}}} =
-  SubArray{T,N,<:Array,I}
-const StridedArray{T,N} = Union{Array{T,N}, StridedSubArray{T,N}}
+const StridedSubArray{
+    T, N, I <: Tuple{
+        Vararg{
+            Union{
+                Base.RangeIndex, Base.ReshapedUnitRange,
+                Base.AbstractCartesianIndex,
+            },
+        },
+    },
+} =
+    SubArray{T, N, <:Array, I}
+const StridedArray{T, N} = Union{Array{T, N}, StridedSubArray{T, N}}
 
 #= Element-wise `dst .+= src`, moving across host/device as needed.
 
@@ -111,7 +119,7 @@ end
 #     end
 #     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 # end
-# 
+#
 # function EnzymeRules.reverse(
 #         config::EnzymeRules.RevConfig,
 #         func::Const{typeof(pointer)},
@@ -155,7 +163,7 @@ for (DstPtr, SrcPtr) in PTR_COPY_DIRECTIONS
                     end
                 end
             end
-            if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+            return if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
                 if EnzymeRules.width(config) == 1
                     Duplicated(dest.val, dest.dval)
                 else
@@ -195,17 +203,17 @@ for (DstPtr, SrcPtr) in PTR_COPY_DIRECTIONS
                 func::Const{typeof(Base.unsafe_copyto!)},
                 ::Type{RT},
                 tape,
-		dest::Annotation{<:$DstPtr{T}},
-		src::Annotation{<:$SrcPtr{T}},
+                dest::Annotation{<:$DstPtr{T}},
+                src::Annotation{<:$SrcPtr{T}},
                 n::Const;
                 kwargs...,
             ) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
                     ddest = _shadow(dest, config, batch)
-		    if !(src isa Const)
-			dsrc = _shadow(src, config, batch)
-    			_accumulate!(dsrc, 0, ddest, 0, n.val)
+                    if !(src isa Const)
+                        dsrc = _shadow(src, config, batch)
+                        _accumulate!(dsrc, 0, ddest, 0, n.val)
                     end
                     _zero!(ddest, 0, n.val)
                 end
@@ -227,11 +235,12 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
                 config::EnzymeRules.RevConfig,
                 func::Const{typeof(Base.unsafe_copyto!)},
                 ::Type{RT},
-		dest::Annotation{<:$DstArr{T}},
-		doffs::Const,
-		src::Annotation{<:$SrcArr{T}},
-		soffs::Const,
-                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
+                dest::Annotation{<:$DstArr{T}},
+                doffs::Const,
+                src::Annotation{<:$SrcArr{T}},
+                soffs::Const,
+                n::Const
+            ) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             func.val(dest.val, doffs.val, src.val, soffs.val, n.val)
             primal = EnzymeRules.needs_primal(config) ? dest.val : nothing
             shadow = if !(RT <: Const) && EnzymeRules.needs_shadow(config) &&
@@ -248,19 +257,20 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
                 func::Const{typeof(Base.unsafe_copyto!)},
                 ::Type{RT},
                 tape,
-		dest::Annotation{<:$DstArr{T}},
-		doffs::Const,
-		src::Annotation{<:$SrcArr{T}},
-		soffs::Const,
-                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
+                dest::Annotation{<:$DstArr{T}},
+                doffs::Const,
+                src::Annotation{<:$SrcArr{T}},
+                soffs::Const,
+                n::Const
+            ) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
                     ddest = _shadow(dest, config, batch)
-		    if !(src isa Const)
-			dsrc = _shadow(src, config, batch)
-			_accumulate!(@view(dsrc[soffs.val:soffs.val+n.val-1]), @view(ddest[doffs.val:doffs.val+n.val-1]))
+                    if !(src isa Const)
+                        dsrc = _shadow(src, config, batch)
+                        _accumulate!(@view(dsrc[soffs.val:(soffs.val + n.val - 1)]), @view(ddest[doffs.val:(doffs.val + n.val - 1)]))
                     end
-		    _zero!(pointer(ddest, doffs.val), 0, n.val)
+                    _zero!(pointer(ddest, doffs.val), 0, n.val)
                 end
             end
             return (nothing, nothing, nothing, nothing, nothing)

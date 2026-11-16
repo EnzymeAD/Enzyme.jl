@@ -52,23 +52,23 @@ end
 ```
 """
 function test_forward(
-    f,
-    ret_activity,
-    args...;
-    rng::Random.AbstractRNG=Random.default_rng(),
-    fdm=FiniteDifferences.central_fdm(5, 1),
-    fkwargs::NamedTuple=NamedTuple(),
-    rtol::Real=1e-9,
-    atol::Real=1e-9,
-    testset_name=nothing,
-    runtime_activity::Bool=false
-)
+        f,
+        ret_activity,
+        args...;
+        rng::Random.AbstractRNG = Random.default_rng(),
+        fdm = FiniteDifferences.central_fdm(5, 1),
+        fkwargs::NamedTuple = NamedTuple(),
+        rtol::Real = 1.0e-9,
+        atol::Real = 1.0e-9,
+        testset_name = nothing,
+        runtime_activity::Bool = false
+    )
     call_with_copy = CallWithCopyKWargs(fkwargs)
     call_with_kwargs = CallWithKWargs(fkwargs)
     if testset_name === nothing
         testset_name = "test_forward: $f with return activity $ret_activity on $(_string_activity(args))"
     end
-    @testset "$testset_name" begin
+    return @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
         activities = map(Base.Fix1(auto_activity, rng), (f, args...))
         primals = map(get_primal, activities)
@@ -79,7 +79,7 @@ function test_forward(
         # call finitedifferences, avoid mutating original arguments
         dy_fdm = _fd_forward(fdm, call_with_copy, ret_activity, y, activities)
         # call autodiff, allow mutating original arguments
-        mode = if ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed, Const}
+        mode = if ret_activity <: Union{DuplicatedNoNeed, BatchDuplicatedNoNeed, Const}
             Forward
         else
             ForwardWithPrimal
@@ -94,7 +94,7 @@ function test_forward(
             ret_activity
         end
         y_and_dy_ad = autodiff(mode, call_with_kwargs, ret_activity2, activities...)
-        if ret_activity <: Union{Duplicated,BatchDuplicated}
+        if ret_activity <: Union{Duplicated, BatchDuplicated}
             @test_msg(
                 "For return type $ret_activity the return value and derivative must be returned",
                 length(y_and_dy_ad) == 2,
@@ -103,7 +103,7 @@ function test_forward(
             test_approx(
                 y_ad, y, "The return value of the rule and function must agree"; atol, rtol
             )
-        elseif ret_activity <: Union{DuplicatedNoNeed,BatchDuplicatedNoNeed}
+        elseif ret_activity <: Union{DuplicatedNoNeed, BatchDuplicatedNoNeed}
             @test_msg(
                 "For return type $ret_activity only the derivative should be returned",
                 length(y_and_dy_ad) == 1,

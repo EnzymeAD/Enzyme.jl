@@ -13,7 +13,7 @@ function to_tape_type(@nospecialize(Type::LLVM.LLVMType))::Tuple{DataType, Bool}
         Tup = Tuple{tys...}
         if containsAny
             res = (syms...,)
-            return NamedTuple{res,Tup}, false
+            return NamedTuple{res, Tup}, false
         else
             return Tup, false
         end
@@ -23,22 +23,22 @@ function to_tape_type(@nospecialize(Type::LLVM.LLVMType))::Tuple{DataType, Bool}
         if 10 <= addrspace <= 12
             return Any, true
         elseif LLVM.isopaque(Type)
-            return Core.LLVMPtr{Cvoid,Int(addrspace)}, false
+            return Core.LLVMPtr{Cvoid, Int(addrspace)}, false
         else
             e = Type.element_type
             if e isa LLVM.FunctionType
-                return Core.LLVMPtr{Cvoid,Int(addrspace)}, false
+                return Core.LLVMPtr{Cvoid, Int(addrspace)}, false
             else
-                return Core.LLVMPtr{to_tape_type(e)[1],Int(addrspace)}, false
+                return Core.LLVMPtr{to_tape_type(e)[1], Int(addrspace)}, false
             end
         end
     end
     if Type isa LLVM.ArrayType
         T, sub = to_tape_type(Type.element_type)
         len = Type.length
-        Tup = NTuple{len,T}
+        Tup = NTuple{len, T}
         if sub
-            return NamedTuple{ntuple(Core.Symbol, Val(len)),Tup}, false
+            return NamedTuple{ntuple(Core.Symbol, Val(len)), Tup}, false
         else
             return Tup, false
         end
@@ -46,9 +46,9 @@ function to_tape_type(@nospecialize(Type::LLVM.LLVMType))::Tuple{DataType, Bool}
     if Type isa LLVM.VectorType
         T, sub = to_tape_type(Type.element_type)
         len = Type.length
-        Tup = NTuple{len,Core.VecElement{T}}
+        Tup = NTuple{len, Core.VecElement{T}}
         if sub
-            return NamedTuple{ntuple(Core.Symbol, Val(len)),Tup}, false
+            return NamedTuple{ntuple(Core.Symbol, Val(len)), Tup}, false
         else
             return Tup, false
         end
@@ -107,21 +107,21 @@ function tape_type(@nospecialize(LLVMType::LLVM.LLVMType))
     return TT
 end
 
-from_tape_type(::Type{T}) where {T<:AbstractFloat} = convert(LLVMType, T)
-from_tape_type(::Type{T}) where {T<:Integer} = convert(LLVMType, T)
-from_tape_type(::Type{NTuple{Size,T}}) where {Size,T} =
+from_tape_type(::Type{T}) where {T <: AbstractFloat} = convert(LLVMType, T)
+from_tape_type(::Type{T}) where {T <: Integer} = convert(LLVMType, T)
+from_tape_type(::Type{NTuple{Size, T}}) where {Size, T} =
     LLVM.ArrayType(from_tape_type(T), Size)
 from_tape_type(::Type{Core.VecElement{T}}) where {T} = from_tape_type(T)
-from_tape_type(::Type{NTuple{Size,Core.VecElement{T}}}) where {Size,T} =
+from_tape_type(::Type{NTuple{Size, Core.VecElement{T}}}) where {Size, T} =
     LLVM.VectorType(from_tape_type(T), Size)
-from_tape_type(::Type{Core.LLVMPtr{T,Addr}}) where {T,Addr} =
+from_tape_type(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} =
     LLVM.PointerType(from_tape_type(UInt8), Addr)
 # from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)
 from_tape_type(::Type{Any}) = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Tracked)
-function from_tape_type(::Type{NamedTuple{A,B}}) where {A,B}
-    from_tape_type(B)
+function from_tape_type(::Type{NamedTuple{A, B}}) where {A, B}
+    return from_tape_type(B)
 end
-function from_tape_type(::Type{B}) where {B<:Tuple}
+function from_tape_type(::Type{B}) where {B <: Tuple}
     ar = LLVM.LLVMType[from_tape_type(b) for b in B.parameters]
     if length(B.parameters) >= 1 && all(ar[1] == b for b in ar)
         return LLVM.ArrayType(ar[1], length(B.parameters))
@@ -129,4 +129,3 @@ function from_tape_type(::Type{B}) where {B<:Tuple}
         return LLVM.StructType(LLVM.LLVMType[from_tape_type(b) for b in B.parameters])
     end
 end
-

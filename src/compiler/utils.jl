@@ -1,4 +1,3 @@
-
 """
     EmitTypeNames[] = true
 
@@ -8,14 +7,15 @@ Also write the printed Julia type next to each type Enzyme records in the IR (th
 """
 const EmitTypeNames = Ref(false)
 
-@enum(AllocFnKindEnum,
-      AFKE_Unknown = 0,
-      AFKE_Alloc = 1,
-      AFKE_Realloc = 2,
-      AFKE_Free = 4,
-      AFKE_Uninitialized = 8,
-      AFKE_Zeroed = 16,
-      AFKE_Aligned = 32,
+@enum(
+    AllocFnKindEnum,
+    AFKE_Unknown = 0,
+    AFKE_Alloc = 1,
+    AFKE_Realloc = 2,
+    AFKE_Free = 4,
+    AFKE_Uninitialized = 8,
+    AFKE_Zeroed = 16,
+    AFKE_Aligned = 32,
 )
 
 struct AllocFnKind
@@ -26,7 +26,7 @@ struct AllocFnKind
 end
 
 function Base.:|(lhs::AllocFnKind, rhs::AllocFnKind)
-    AllocFnKind(UInt32(lhs.data) | UInt32(rhs.data))
+    return AllocFnKind(UInt32(lhs.data) | UInt32(rhs.data))
 end
 
 # Memory effects, as encoded in the `memory` attribute on LLVM 16+, are handled with
@@ -210,7 +210,7 @@ end
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
 
 function declare_pgcstack!(mod::LLVM.Module)
-    get_function!(
+    return get_function!(
         mod,
         "julia.get_pgcstack",
         LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())),
@@ -218,7 +218,7 @@ function declare_pgcstack!(mod::LLVM.Module)
     )
 end
 
-function emit_pgcstack(B::LLVM.IRBuilder, name::String="")
+function emit_pgcstack(B::LLVM.IRBuilder, name::String = "")
     curent_bb = B.insert_block
     fn = curent_bb.parent
     mod = fn.parent
@@ -434,7 +434,7 @@ function unique_gcmarker!(func::LLVM.Function)
         end
     end
     if length(found) > 1
-        for i = 2:length(found)
+        for i in 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
             eraseInst(entry_bb, found[i])
         end
@@ -442,8 +442,8 @@ function unique_gcmarker!(func::LLVM.Function)
     return nothing
 end
 
-@inline AnonymousStruct(::Type{U}) where {U<:Tuple} =
-    NamedTuple{ntuple(Symbol, Val(length(U.parameters))),U}
+@inline AnonymousStruct(::Type{U}) where {U <: Tuple} =
+    NamedTuple{ntuple(Symbol, Val(length(U.parameters))), U}
 
 # recursively compute the eltype type indexed by idx[0], idx[1], ...
 Base.@assume_effects :removable :foldable :nothrow function recursive_eltype(@nospecialize(val::LLVM.Value), idxs::Vector{Cuint})::LLVM.LLVMType
@@ -462,14 +462,14 @@ end
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
 function calling_conv_fixup(
-    builder::LLVM.IRBuilder,
-    @nospecialize(val::LLVM.Value),
-    @nospecialize(tape::LLVM.LLVMType),
-    @nospecialize(prev::LLVM.Value) = LLVM.UndefValue(tape),
-    lidxs::Vector{Cuint} = Cuint[],
-    ridxs::Vector{Cuint} = Cuint[],
-    emesg = nothing,
-)::LLVM.Value
+        builder::LLVM.IRBuilder,
+        @nospecialize(val::LLVM.Value),
+        @nospecialize(tape::LLVM.LLVMType),
+        @nospecialize(prev::LLVM.Value) = LLVM.UndefValue(tape),
+        lidxs::Vector{Cuint} = Cuint[],
+        ridxs::Vector{Cuint} = Cuint[],
+        emesg = nothing,
+    )::LLVM.Value
     ctype = recursive_eltype(val, lidxs)
     if ctype == tape
         if length(lidxs) != 0
@@ -544,7 +544,7 @@ function calling_conv_fixup(
         end
     end
     if isa(tape, LLVM.PointerType) &&
-       isa(ctype, LLVM.PointerType) &&
+            isa(ctype, LLVM.PointerType) &&
             tape.addrspace == ctype.addrspace
         if length(lidxs) != 0
             val = extract_value!(builder, val, lidxs)
