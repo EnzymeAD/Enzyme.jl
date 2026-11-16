@@ -196,6 +196,11 @@ function prepare!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
+    for g in globals(mod)
+        if !LLVM.isdeclaration(g) && LLVM.linkage(g) == LLVM.API.LLVMExternalLinkage
+            LLVM.linkage!(g, LLVM.API.LLVMInternalLinkage)
+        end
+    end
 end
 
 function get_trampoline(job)

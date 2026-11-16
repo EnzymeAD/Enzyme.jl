@@ -1172,3 +1172,99 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "Bitcode replacement global linkage (#2706)" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module,
+            """
+            @defined_glob = unnamed_addr constant [3 x double] [double 1.0, double 2.0, double 3.0], align 8
+            @decl_glob = external global i64
+            """,
+        )
+        Enzyme.Compiler.JIT.prepare!(mod)
+        @test LLVM.linkage(LLVM.globals(mod)["defined_glob"]) == LLVM.API.LLVMInternalLinkage
+        @test LLVM.linkage(LLVM.globals(mod)["decl_glob"]) == LLVM.API.LLVMExternalLinkage
+    end
+
+    mktempdir() do dir
+        bc_bytes = LLVM.Context() do ctx
+            bc_mod = parse(
+                LLVM.Module,
+                """
+                @A = private unnamed_addr constant [3 x double] [double 1.0, double 2.0, double 3.0], align 8
+
+                define double @func(double %x, double %y, i64 %n) {
+                entry:
+                  %ptr = getelementptr inbounds [3 x double], [3 x double]* @A, i64 0, i64 %n
+                  %aval = load double, double* %ptr, align 8
+                  %prod = fmul double %x, %aval
+                  %sum = fadd double %prod, %y
+                  ret double %sum
+                }
+                """,
+            )
+            buf = convert(LLVM.MemoryBuffer, bc_mod)
+            bytes = convert(Vector{UInt8}, buf)
+            LLVM.dispose(buf)
+            bytes
+        end
+
+        obj_path = joinpath(dir, "libfunc.o")
+        LLVM.Context() do ctx
+            obj_mod = LLVM.Module("wrapper")
+            tm = Enzyme.Compiler.JIT.get_tm()
+            LLVM.triple!(obj_mod, LLVM.triple(tm))
+            LLVM.DataLayout(tm) do dl
+                LLVM.datalayout!(obj_mod, dl)
+            end
+            init = LLVM.ConstantDataArray(bc_bytes)
+            gv = LLVM.GlobalVariable(obj_mod, LLVM.value_type(init), "llvm.embedded.module")
+            LLVM.initializer!(gv, init)
+            LLVM.constant!(gv, true)
+            LLVM.section!(gv, Sys.isapple() ? "__LLVM,__bundle" : ".llvmbc")
+            LLVM.emit(tm, obj_mod, LLVM.API.LLVMObjectFile, obj_path)
+        end
+
+        imported_ok = LLVM.Context() do ctx
+            dst = LLVM.Module("dst")
+            tm = Enzyme.Compiler.JIT.get_tm()
+            LLVM.triple!(dst, LLVM.triple(tm))
+            LLVM.DataLayout(tm) do dl
+                LLVM.datalayout!(dst, dl)
+            end
+            found, fn = Enzyme.Compiler.try_import_llvmbc(dst, obj_path, "func", Set{String}())
+            if found
+                @test fn !== nothing
+                @test LLVM.linkage(LLVM.globals(dst)["A"]) == LLVM.API.LLVMInternalLinkage
+            end
+            found
+        end
+
+        if imported_ok
+            for idx in (1, 2)
+                fn_name = "func_inst_$(idx)_2706"
+                addr = LLVM.Context() do ctx
+                    dst = LLVM.Module("dst_$(idx)")
+                    tm = Enzyme.Compiler.JIT.get_tm()
+                    LLVM.triple!(dst, LLVM.triple(tm))
+                    LLVM.DataLayout(tm) do dl
+                        LLVM.datalayout!(dst, dl)
+                    end
+                    found, fn = Enzyme.Compiler.try_import_llvmbc(dst, obj_path, "func", Set{String}())
+                    @test found
+                    LLVM.name!(fn, fn_name)
+                    LLVM.linkage!(fn, LLVM.API.LLVMExternalLinkage)
+                    Enzyme.Compiler.JIT.prepare!(dst)
+                    @test LLVM.linkage(LLVM.globals(dst)["A"]) == LLVM.API.LLVMInternalLinkage
+                    jd = Enzyme.Compiler.JIT.add!(dst)
+                    Enzyme.Compiler.JIT.lookup(jd, fn_name)
+                end
+                # `addr.ptr` is a 64-bit address even where pointers are 32 bits.
+                fptr = Ptr{Cvoid}(addr.ptr % UInt)
+                res = ccall(fptr, Cdouble, (Cdouble, Cdouble, Int64), 2.0, 1.0, idx)
+                @test res == 2.0 * (idx + 1) + 1.0
+            end
+        end
+    end
+end
