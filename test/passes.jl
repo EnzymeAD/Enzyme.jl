@@ -1213,3 +1213,33 @@ end
         @test retval("unmatched") isa LLVM.LoadInst
     end
 end
+
+@testset "annotate! marks julia.call and julia.call2 allocations, nothing else" begin
+    LLVM.Context(; opaque_pointers = true) do ctx
+        mod = parse(
+            LLVM.Module,
+            """
+            declare ptr addrspace(10) @jl_f_tuple(ptr addrspace(10), ptr, i32)
+            declare ptr addrspace(10) @julia.call(ptr, ...)
+            declare ptr addrspace(10) @julia.call2(ptr, ptr addrspace(10), ...)
+            declare ptr addrspace(10) @other(ptr)
+
+            define void @f(ptr addrspace(10) %x) {
+              %call = call ptr addrspace(10) (ptr, ...) @julia.call(ptr @jl_f_tuple, ptr addrspace(10) null, ptr addrspace(10) %x)
+              %call2 = call ptr addrspace(10) (ptr, ptr addrspace(10), ...) @julia.call2(ptr @jl_f_tuple, ptr addrspace(10) null, ptr addrspace(10) %x)
+              %other = call ptr addrspace(10) @other(ptr @jl_f_tuple)
+              ret void
+            }
+            """,
+        )
+        Enzyme.Compiler.annotate!(mod)
+        calls = Dict(
+            inst.name => inst for inst in only(mod.functions["f"].blocks).instructions
+                if inst isa LLVM.CallInst
+        )
+        @test haskey(calls["call"].return_attributes, :noalias)
+        @test haskey(calls["call2"].return_attributes, :noalias)
+        @test !haskey(calls["other"].return_attributes, :noalias)
+        @test isempty(collect(calls["other"].function_attributes))
+    end
+end
