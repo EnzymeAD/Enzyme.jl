@@ -700,6 +700,7 @@ end
     v = first(onehot(x))
     hv = make_zero(v)
     nested_hvp!(hv, v, x)
+    @test hv ≈ [-2 * tanh(0.5) * sech(0.5)^2]
 end
 
 const CONST_VAL = 2.0
@@ -731,6 +732,21 @@ end
     @test res ≈ 1.0
 end
 
+# A derivative compiled into another one refers to the Dict's fields by their literal addresses.
+# Folding those loads would keep the memories the Dict had at compile time.
+const GLOB_DICT_NESTED = Dict{Int, Float64}()
+f_glob_dict_nested(x) = x^2 * get(GLOB_DICT_NESTED, 1, 1.0)
+df_glob_dict_nested(x) = autodiff_deferred(Reverse, Const(f_glob_dict_nested), Active, Active(x))[1][1]
+
+@testset "Global Dict that grows after a nested derivative is compiled" begin
+    @test autodiff(Forward, df_glob_dict_nested, Duplicated(3.0, 1.0))[1] ≈ 2.0
+    # enough entries for the Dict to replace its memories on every Julia version
+    for k in 1:100
+        GLOB_DICT_NESTED[k] = 2.0
+    end
+    @test autodiff(Forward, df_glob_dict_nested, Duplicated(3.0, 1.0))[1] ≈ 4.0
+end
+
 using LinearAlgebra
 
 struct WrapJ11{T, V}
@@ -739,7 +755,7 @@ struct WrapJ11{T, V}
 end
 
 function combined_j11(d::WrapJ11, p::Vector{Float64}, z::Vector{ComplexF64})
-    N  = length(d.λQ)
+    N = length(d.λQ)
     ld = sum(log, d.λQ)
     cp = abs(dot(z, z))
     return d.ρ * ld - N * 0.5 + cp + @inbounds p[1]
@@ -752,11 +768,13 @@ const LAMBDA_J11 = [2.0]
     p0 = [1.0]
     ρ0 = 1.5
     dp = zero(p0)
-    
-    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse),
+
+    res = Enzyme.autodiff(
+        set_runtime_activity(Enzyme.Reverse),
         Const((p, ρ, z) -> combined_j11(WrapJ11(ρ, LAMBDA_J11), p, z)), Active,
-        Duplicated(p0, dp), Active(ρ0), Const(Z_DATA_J11))
-    
+        Duplicated(p0, dp), Active(ρ0), Const(Z_DATA_J11)
+    )
+
     @test res[1][2] ≈ log(2.0)
 end
 
@@ -824,12 +842,12 @@ function generate_callbacks_bcm(solution_value, isdae, times, buffer_val)
     t, duplicate_times = separate_nonunique_bcm(times)
     solution = isdae ? solution_value : nothing
     buffer = make_buffer_bcm(buffer_val)
-    
+
     cb = PresetTimeCallback_BCM(
         times,
         ReverseLossCallback_BCM(solution, buffer)
     )
-    
+
     cb_set = if duplicate_times !== nothing
         cb_duplicate = PresetTimeCallback_BCM(
             duplicate_times[1],
@@ -839,14 +857,14 @@ function generate_callbacks_bcm(solution_value, isdae, times, buffer_val)
     else
         CallbackSet_BCM((cb, nothing))
     end
-    
+
     return cb_set, duplicate_times
 end
 
 function differentiate_bcm(buffer_val)
     solution = [0.5]
     times = collect(range(0.0, 1.0, length = 5))
-    
+
     return Enzyme.autodiff(
         Enzyme.set_runtime_activity(Enzyme.Forward),
         Enzyme.Const(generate_callbacks_bcm),
@@ -861,7 +879,7 @@ end
     # Test Val(:none) (works previously)
     res_none = differentiate_bcm(Val(:none))
     @test res_none !== nothing
-    
+
     # Test Val(:vector) (previously failed on 1.11 with IllegalTypeAnalysisException)
     res_vector = differentiate_bcm(Val(:vector))
     @test res_vector !== nothing
@@ -918,4 +936,20 @@ end
     @test Enzyme.autodiff(Forward, make_uuid4, Duplicated(2.0, 1.0), Const(out)) == (2.0,)
     @test out[1] != UUIDs.UUID(0)
     @test Enzyme.autodiff(Reverse, make_uuid4, Active(2.0), Const(out)) == ((2.0, nothing),)
+end
+
+# Issue #3868: on Julia 1.13.2+, copying small float tuples into a mutable struct
+# is lowered via integer chunks (load i64 / store i64) and packed via SROA
+# (zext + shl + or disjoint). Differentiating the packed integer requires handling
+# the disjoint `or`.
+mutable struct Prob3868
+    tspan::Tuple{Float32, Float32}
+end
+make3868(t) = Prob3868((t[1], t[2]))
+f3868(a, b) = (p = Base.inferencebarrier(make3868)((a, b))::Prob3868; p.tspan[1] * p.tspan[2])
+
+@testset "Packed float tuple in mutable struct (issue #3868)" begin
+    @test autodiff(Reverse, f3868, Active, Active(2.0f0), Active(3.0f0)) == ((3.0f0, 2.0f0),)
+    @test autodiff(Forward, f3868, Duplicated, Duplicated(2.0f0, 1.0f0), Const(3.0f0))[1] ≈ 3.0f0
+    @test autodiff(Forward, f3868, Duplicated, Const(2.0f0), Duplicated(3.0f0, 1.0f0))[1] ≈ 2.0f0
 end

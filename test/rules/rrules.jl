@@ -583,4 +583,270 @@ uninferred_outer(p) = (y = uninferred_fun(p); y[1]^2 + y[2]^2)
     @test d2 ≈ [2.0, 4.0]
 end
 
+# A rule reached through a dynamic call runs in split mode, where the augmented
+# forward and the reverse pass are separate compilations. They must agree on
+# the rule's config and return activity, which select the rule method and the
+# tape layout. Here only the augmented function returns the primal.
+struct SplitModeArg
+    x::Float64
+    v::Vector{Float64}
+end
+
+@noinline split_scale(s::SplitModeArg) = s.v .* s.x
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_scale)},
+        RTA::Type{<:Duplicated}, s
+    )
+    res = split_scale(s.val)
+    dres = zero(res)
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(res, dres, dres)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_scale)},
+        ::Type{<:Duplicated}, dres, s
+    )
+    s.dval[].v .+= dres .* s.val.x
+    return (nothing,)
+end
+
+split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeArg(2.0, v)))
+
+@testset "Custom rule in split mode through a dynamic call" begin
+    @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+end
+
+# A hand-written rule whose primal only reads inline fields of a struct argument
+# while the custom rule also inspects its GC-tracked fields (as in
+# `DiffEqBase.solve_up`) declares `has_readonly_rule` rather than
+# `has_attribute_preserving_rule`, keeping `enzyme_LocalReadOnlyOrThrow` and
+# constant-call skipping without allowing DSE/readnone inference to drop unread
+# GC-tracked struct fields.
+struct ReadonlyRuleArg
+    mode::Int
+    weights::Vector{Float64}
+end
+
+const readonly_rule_calls = Ref(0)
+
+@noinline function readonly_rule_partial(p::ReadonlyRuleArg, u::Vector{Float64})
+    return p.mode .* u
+end
+
+EnzymeRules.has_readonly_rule(::typeof(readonly_rule_partial), ::ReadonlyRuleArg, ::Vector{Float64}) = nothing
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(readonly_rule_partial)},
+        ::Type{RT}, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    ) where {RT}
+    readonly_rule_calls[] += 1
+    res = p.val.weights .* (p.val.mode .* u.val)
+    dp = p isa Const ? zero(res) : (p.dval.weights .* (p.val.mode .* u.val))
+    du = u isa Const ? zero(res) : p.val.weights .* (p.val.mode .* u.dval)
+    dres = dp .+ du
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.needs_shadow(config) ? Duplicated(res, dres) : res
+    else
+        return EnzymeRules.needs_shadow(config) ? dres : nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(readonly_rule_partial)},
+        RTA::Type{<:Duplicated}, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    )
+    readonly_rule_calls[] += 1
+    res = p.val.weights .* (p.val.mode .* u.val)
+    dres = EnzymeRules.needs_shadow(config) ? zero(res) : nothing
+    tape = (dres, copy(p.val.weights), copy(u.val))
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(
+        EnzymeRules.needs_primal(config) ? res : nothing, dres, tape
+    )
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(readonly_rule_partial)},
+        ::Type{<:Duplicated}, tape, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    )
+    dres, w, uval = tape
+    rta = EnzymeRules.runtime_activity(config)
+    if p isa Duplicated && !(rta && p.dval.weights === p.val.weights)
+        p.dval.weights .+= dres .* (p.val.mode .* uval)
+    end
+    if !(u isa Const) && !(rta && u.dval === u.val)
+        u.dval .+= dres .* (p.val.mode .* w)
+    end
+    fill!(dres, 0.0)
+    return (nothing, nothing)
+end
+
+readonly_rule_const_prob_loss(u) = sum(readonly_rule_partial(ReadonlyRuleArg(2, [3.0, 5.0]), u))
+readonly_rule_active_prob_loss(w, u) = sum(readonly_rule_partial(ReadonlyRuleArg(2, w), u))
+readonly_rule_split_loss(u) = sum(Base.inferencebarrier((p, x) -> readonly_rule_partial(p, x))(ReadonlyRuleArg(2, [3.0, 5.0]), u))
+function readonly_rule_const_call(u)
+    _ = readonly_rule_partial(ReadonlyRuleArg(2, [3.0, 5.0]), [1.0, 1.0])
+    return sum(u)
+end
+
+@testset "has_readonly_rule preserves unread GC-tracked struct fields" begin
+    @test EnzymeRules.has_readonly_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
+    @test !EnzymeRules.has_attribute_preserving_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
+    ir = sprint(
+        io -> Enzyme.Compiler.enzyme_code_llvm(
+            io, readonly_rule_const_prob_loss, Active, Tuple{Duplicated{Vector{Float64}}};
+            run_enzyme = false, raw = true, dump_module = true
+        )
+    )
+    @test occursin("enzyme_ReadOnlyOrThrow", ir) || occursin("enzyme_LocalReadOnlyOrThrow", ir)
+    @test !occursin("enzyme_custom_full_attributes", ir)
+
+    @test Enzyme.gradient(Reverse, readonly_rule_const_prob_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), readonly_rule_const_prob_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), readonly_rule_split_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+
+    w = [3.0, 5.0]
+    dw = zeros(2)
+    u = [4.0, 7.0]
+    du = zeros(2)
+    Enzyme.autodiff(
+        Reverse, readonly_rule_active_prob_loss, Active,
+        Duplicated(w, dw), Duplicated(u, du)
+    )
+    @test dw ≈ [8.0, 14.0]
+    @test du ≈ [6.0, 10.0]
+
+    fill!(dw, 0.0)
+    fill!(du, 0.0)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse), readonly_rule_active_prob_loss, Active,
+        Duplicated(w, dw), Duplicated(u, du)
+    )
+    @test dw ≈ [8.0, 14.0]
+    @test du ≈ [6.0, 10.0]
+
+    fwd_d = Enzyme.autodiff(
+        Forward, readonly_rule_active_prob_loss, Duplicated,
+        Duplicated([3.0, 5.0], [1.0, -1.0]), Duplicated([4.0, 7.0], [0.5, 2.0])
+    )
+    @test fwd_d[1] ≈ 17.0
+
+    # Constant calls still bypass a `has_readonly_rule` custom rule in both Reverse and Forward.
+    readonly_rule_calls[] = 0
+    @test Enzyme.gradient(Reverse, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test readonly_rule_calls[] == 0
+    @test Enzyme.gradient(Forward, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test readonly_rule_calls[] == 0
+end
+
+function rrule_only_op!(y::Vector{Float64}, w::Vector{Float64}, x::Vector{Float64}, save_x::Bool)
+    @inbounds for i in eachindex(y, w, x)
+        y[i] = tanh(w[i] * x[i])
+    end
+    return nothing
+end
+
+function augmented_primal(
+        cfg::RevConfigWidth{1},
+        ::Const{typeof(rrule_only_op!)},
+        ::Type{Const{Nothing}},
+        y::Annotation{Vector{Float64}},
+        w::Annotation{Vector{Float64}},
+        x::Annotation{Vector{Float64}},
+        save_x::Const{Bool},
+    )
+    rrule_only_op!(y.val, w.val, x.val, save_x.val)
+    cache = save_x.val ? (2, copy(x.val)) : (1, nothing)
+    return AugmentedReturn(nothing, nothing, cache)
+end
+
+function reverse(
+        cfg::RevConfigWidth{1},
+        ::Const{typeof(rrule_only_op!)},
+        ::Type{Const{Nothing}},
+        cache,
+        y::Annotation{Vector{Float64}},
+        w::Annotation{Vector{Float64}},
+        x::Annotation{Vector{Float64}},
+        ::Const{Bool},
+    )
+    if !(y isa Const)
+        dy = y.dval
+        @inbounds for i in eachindex(dy)
+            sech2 = 1.0 - y.val[i]^2
+            dl = dy[i] * sech2
+            if !(w isa Const) && w.dval !== w.val
+                w.dval[i] += dl * x.val[i]
+            end
+            if !(x isa Const) && x.dval !== x.val
+                x.dval[i] += dl * w.val[i]
+            end
+            dy[i] = 0.0
+        end
+    end
+    return (nothing, nothing, nothing, nothing)
+end
+
+function _apply_rrule_only_chain(w::Vector{Float64}, x::Vector{Float64})
+    y = similar(x)
+    rrule_only_op!(y, w, x, false)
+    return sum(abs2, y)
+end
+
+# TODO: re-enable on Julia 1.10 / 1.11 once
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3959 is fixed (LLVM verifier
+# failure storing the boxed tape into the `{ i64 }` tape slot).
+@static if VERSION >= v"1.12-"
+    @testset "Forward-over-Reverse through rrule without frule" begin
+        @test EnzymeRules.has_rrule_from_sig(
+            Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+        )
+        @test !EnzymeRules.has_frule_from_sig(
+            Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+        )
+
+        w0 = [0.6, -0.4]
+        x0 = [1.2, 0.8]
+        vw = [0.3, -0.7]
+
+        # Exact HVP of f(w) = sum_i tanh(w_i * x_i)^2:
+        # df/dw_i = 2 * tanh(z_i) * sech^2(z_i) * x_i
+        # d2f/dw_i^2 = 2 * x_i^2 * sech^2(z_i) * (sech^2(z_i) - 2 * tanh^2(z_i))
+        g_exact = [
+            let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+                2.0 * t * s2 * x0[i]
+            end for i in eachindex(w0)
+        ]
+        hv_exact = [
+            let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+                2.0 * x0[i]^2 * s2 * (s2 - 2.0 * t^2) * vw[i]
+            end for i in eachindex(w0)
+        ]
+
+        loss_fn = w -> _apply_rrule_only_chain(w, x0)
+        g = zeros(2)
+        hv = zeros(2)
+        Enzyme.autodiff(
+            Enzyme.set_runtime_activity(Forward),
+            Const(
+                (g_out, w_in) -> begin
+                    fill!(g_out, 0.0)
+                    Enzyme.autodiff(
+                        Enzyme.set_runtime_activity(Reverse),
+                        Const(loss_fn),
+                        Active,
+                        Duplicated(w_in, g_out),
+                    )
+                    return nothing
+                end
+            ),
+            Const,
+            Duplicated(g, hv),
+            Duplicated(copy(w0), copy(vw)),
+        )
+        @test g ≈ g_exact rtol = 1.0e-12
+        @test hv ≈ hv_exact rtol = 1.0e-12
+    end
+end
+
 end # ReverseRules

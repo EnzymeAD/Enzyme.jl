@@ -249,6 +249,19 @@ end
     @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0),)
     @test dparams[:var] == 5.0
 
+    # A `String` key hashes through the `memhash_seed` ccall, so every dictionary operation
+    # here loads the symbol from a PLT stub. `check_ir` has to resolve each of those loads to
+    # the same declaration; resolving one to a bare address instead leaves Enzyme
+    # differentiating an anonymous call ("No create nofree of unknown value").
+    function f_strdict(x)
+        d = Dict{String, Float64}()
+        d["a"] = x
+        d["bb"] = 2 * x
+        return d["a"] + d["bb"]
+    end
+
+    @test autodiff(Reverse, f_strdict, Active, Active(3.0))[1][1] == 3.0
+
 
     mutable struct MD
         v::Float64
@@ -306,7 +319,7 @@ end
     x = [2.0]
     dx = [0.0]
     @test Enzyme.autodiff(Reverse, invsin2, Active, Duplicated(x, dx)) == ((nothing,),)
-    if julia_typed_pointers
+    if julia_typed_pointers || VERSION >= v"1.13.2-DEV"
         @test dx[1] == -0.4161468365471424
     else
         @test_broken dx[1] == -0.4161468365471424
@@ -954,7 +967,7 @@ end
         N_COLUMNS = size(out, 2)
         for i in 1:N_TIME_STEPS
             for j in 1:N_COLUMNS
-                prev = i == 1 ? 0.0 : out[i-1, j]
+                prev = i == 1 ? 0.0 : out[i - 1, j]
                 out[i, j] = prev * arg1 + arg2
             end
         end
@@ -1217,9 +1230,9 @@ end
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
         sum(
             sum(
-                    weight
+                weight
                     for (weight, mean) in zip(weights, weights)
-                )
+            )
                 for x in data
         )
     end
@@ -1999,7 +2012,8 @@ end
 @testset "Enum Autodiff" begin
     forward, reverse = Enzyme.autodiff_thunk(
         Enzyme.ReverseSplitWithPrimal, Enzyme.Const{typeof(g_enum_test)}, Enzyme.Duplicated,
-        Enzyme.Duplicated{Vector{Float64}})
+        Enzyme.Duplicated{Vector{Float64}}
+    )
 
     u0 = [1.0]
     du0 = zero(u0)
@@ -2046,11 +2060,11 @@ end
 # https://github.com/EnzymeAD/Enzyme.jl/issues/3697
 # A non-const global must be read at runtime, not folded to its compile-time value.
 module MutableGlobal3697
-counter = 5000
-@noinline function bump()
-    global counter += 1
-    return counter
-end
+    counter = 5000
+    @noinline function bump()
+        global counter += 1
+        return counter
+    end
 end
 
 mutable_global_3697(x) = x * MutableGlobal3697.bump()

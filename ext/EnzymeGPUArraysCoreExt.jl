@@ -189,11 +189,16 @@ else
     const _matvec_entry = LinearAlgebra.mul!
 end
 
-# Back-ends may still overload the pre-1.13 names on 1.13: cuBLAS routes `mul!` of
-# `CuArray`s through `generic_matmatmul_wrapper!` straight into its own
-# `generic_matmatmul!`, never reaching the `mul!` methods above. Attach the rules to
-# both names so they fire whichever one the back-end overloads.
-@static if VERSION < v"1.13.0-rc4"
+# Back-ends do not keep to that boundary: they may still overload the pre-1.13 names
+# on 1.13, and on 1.12 they may already route around them. cuBLAS before 6.4 sends
+# `mul!` of `CuArray`s through `generic_matmatmul_wrapper!` into its own
+# `generic_matmatmul!`; from 6.4 on, the same wrapper calls its `mul!` method taking
+# the wrapper chars directly, on 1.12 too, and `generic_matmatmul!` is only a
+# forwarder that `*` never reaches. Attach the rules to both names from 1.12 on, the
+# first version where α and β are separate arguments, so they fire whichever one the
+# back-end calls. Before 1.12 the entry points take a `MulAddMul` and no `mul!`
+# method has that signature.
+@static if VERSION < v"1.12.0-DEV"
     const _MatmatEntry = typeof(_matmat_entry)
     const _MatvecEntry = typeof(_matvec_entry)
 else

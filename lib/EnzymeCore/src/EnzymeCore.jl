@@ -570,7 +570,7 @@ const ForwardWithPrimal = ForwardMode{true, DefaultABI, false, false, false}()
 @inline clear_runtime_activity(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, false, StrongZero}()
 
 @inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, true}()
-@inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, rt::Bool) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, rt}()()
+@inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, rt::Bool) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, rt}()
 @inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, SZ2} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, SZ2}()
 @inline clear_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, false}()
 

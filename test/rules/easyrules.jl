@@ -220,4 +220,35 @@ end
     @test dx ≈ (adjoint(both_jac(x)) * dy) .+ dx0
 end
 
+# A type that is defined only in this module, not in `EnzymeRules`
+const LocalFloat = Union{Float32, Float64}
+
+mycube(x) = x^3
+
+EnzymeRules.@easy_rule(mycube(x::LocalFloat), (3 * x^2,))
+
+@testset "EasyRule with an argument type of the calling module" begin
+    @test EnzymeRules.has_readonly_rule(mycube, 2.0)
+    @test EnzymeRules.has_attribute_preserving_rule(mycube, 2.0)
+    @test autodiff(Forward, mycube, Duplicated(2.0, 1.0))[1] ≈ 12.0
+    @test autodiff(Reverse, mycube, Active, Active(2.0))[1][1] ≈ 12.0
+end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3844
+sqfirst(x::Vector{Float64}) = x[1]^2
+EnzymeRules.@easy_rule(sqfirst(x::Vector{Float64}), ([2x[1]],))
+
+function sqfirst_overwrite(x)
+    y = sqfirst(x)
+    x[1] = 0.0
+    return y
+end
+
+@testset "Reverse EasyRule with an overwritten input" begin
+    x = [3.0]
+    dx = Enzyme.make_zero(x)
+    autodiff(Reverse, sqfirst_overwrite, Active, Duplicated(x, dx))
+    @test dx ≈ [6.0]
+end
+
 end # module EasyRules
