@@ -1,5 +1,19 @@
 using Enzyme, Test
 
+@noinline correlated_union_build(state, a, b) = (; state)
+
+function correlated_union_args(x)
+    a = x > 0.5 ? (; reward = nothing) : (; reward = x)
+    b = (; reward = a.reward)
+    return correlated_union_build(2x, a, b).state
+end
+
+@testset "Correlated union fields in named tuple construction" begin
+    for mode in (Forward, Reverse, set_runtime_activity(Reverse)), x in (0.3, 0.7)
+        @test Enzyme.gradient(mode, correlated_union_args, x) == (2.0,)
+    end
+end
+
 @eval construct_splatnew(T, fields) = $(Expr(:splatnew, :T, :fields))
 
 struct ActivePair
