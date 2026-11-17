@@ -1,0 +1,33 @@
+# AMDGPU tests (test/amdgpu.jl) on CSCS's beverin, shared by ci/cscs-mi250.yml (MI250X) and ci/cscs-mi300.yml (MI300A).
+# Each of these files includes this file, defines .amdgpu_runner (the runner template of its partition) and lists its jobs.
+#
+# Julia is an x86 build of the CI user. The job develops Enzyme, EnzymeCore and EnzymeTestUtils from the checkout into the default
+# environment of a job-local depot, and adds AMDGPU.
+#
+# ROCm comes from the ROCm_Runtime artifacts, the default of AMDGPU >= 2.12. Thus the job runs on the bare node, without a uenv.
+# A second ROCm in the process environment mixes with the artifacts, and the first stream then fails with hipErrorOutOfMemory
+# (ROCm/TheRock#7426). Pkg selects the artifact from the GPU of the host, so each Julia command runs on the allocated node (srun).
+.amdgpu_test:
+  variables:
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS_PER_NODE: 1
+    SLURM_GPUS_PER_TASK: 1
+    SLURM_TIMELIMIT: '01:00:00'
+    JULIA_DEPOT_PATH: '${CI_PROJECT_DIR}/.julia'  # Job-local depot.
+    JULIA_PKG_SERVER_REGISTRY_PREFERENCE: 'eager'
+    JULIA_AMDGPU_CORE_MUST_LOAD: '1'              # Fail instead of skipping if ROCm cannot be loaded.
+    JULIA_AMDGPU_HIP_MUST_LOAD: '1'
+    # Job-local: the default ~/.cache/comgr persists across jobs and ROCm versions on the shared runner.
+    AMD_COMGR_CACHE_DIR: '${CI_PROJECT_DIR}/.comgr-cache'
+  script:
+    - ulimit -c 0  # No core dumps on crashes (GBs).
+    - |
+      srun -n 1 $JULIA --color=yes -e '
+        using Pkg
+        Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")])
+        Pkg.add(PackageSpec(; name="AMDGPU", version="2.12"))
+        Pkg.status()
+        using AMDGPU
+        AMDGPU.versioninfo()
+        AMDGPU.local_rocm && error("AMDGPU uses a local ROCm, not the ROCm_Runtime artifacts")'
+    - srun -n 1 $JULIA --color=yes test/amdgpu.jl
