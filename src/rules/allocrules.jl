@@ -106,7 +106,7 @@ function array_shadow_handler(
         end
         if isunion
             # an extra byte for each isbits union array element, stored after a->maxsize
-            tot = LLVM.add!(b, tot, prod)
+            tot = LLVM.add!(b, tot, arlen)
         end
         tot
     end

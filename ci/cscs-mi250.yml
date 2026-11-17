@@ -1,0 +1,27 @@
+# One GCD of a MI250X (gfx90a) on beverin's mi200 partition. The job template is in ci/cscs-common.yml.
+include:
+  - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
+  - local: 'ci/cscs-common.yml'
+
+.amdgpu_runner:
+  extends: .baremetal-runner-beverin-mi200
+
+AMDGPU julia 1.10:
+  extends: [.amdgpu_runner, .amdgpu_test]
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.10'
+
+AMDGPU julia 1.11:
+  extends: [.amdgpu_runner, .amdgpu_test]
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.11'
+
+AMDGPU julia 1.12:
+  extends: [.amdgpu_runner, .amdgpu_test]
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.12'
+
+AMDGPU julia 1.13:
+  extends: [.amdgpu_runner, .amdgpu_test]
+  variables:
+    JULIA: '/users/lraess/julia_amd/julia_amd-1.13'
