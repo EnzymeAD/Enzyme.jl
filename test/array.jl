@@ -417,3 +417,15 @@ f_deleteat_3708(v) = (deleteat!(v, 4:5); msum_3708(v))
         @test res ≈ vcat(1.0:3.0, [0.0, 0.0], 4.0:73.0)
     end
 end
+
+function union_array_prod(x)
+    v = Vector{Union{Nothing, Float64}}(undef, 3)
+    v[1] = x
+    v[2] = nothing
+    v[3] = 2x
+    return (v[1]::Float64) * (v[3]::Float64)
+end
+
+@testset "Shadow of an isbits-Union array" begin
+    @test autodiff(Reverse, union_array_prod, Active, Active(3.0))[1][1] ≈ 12.0
+end
