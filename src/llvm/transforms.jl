@@ -3596,6 +3596,64 @@ function get_callee(inst::LLVM.CallInst)
     return nothing
 end
 
+function md_node_name(@nospecialize(md))::String
+    md isa LLVM.MDNode || return ""
+    ops = md.operands
+    (length(ops) >= 1 && ops[1] isa LLVM.MDString) || return ""
+    return convert(String, ops[1])
+end
+
+"""
+    has_const_alias_claim(inst) -> Bool
+
+Say if `inst` carries Julia's claim that it reads constant memory: `jtbaa_const`
+TBAA, or the `jnoalias_const` alias scope.
+"""
+function has_const_alias_claim(inst::LLVM.Instruction)::Bool
+    md = inst.metadata
+    if haskey(md, "tbaa")
+        ops = md["tbaa"].operands
+        if length(ops) >= 2 && md_node_name(ops[2]) == "jtbaa_const"
+            return true
+        end
+    end
+    if haskey(md, "alias.scope")
+        for scope in md["alias.scope"].operands
+            if md_node_name(scope) == "jnoalias_const"
+                return true
+            end
+        end
+    end
+    return false
+end
+
+"""
+    drop_const_alias_metadata!(f) -> Bool
+
+Julia tags a load from an immutable object reached through an argument as a
+read of constant memory, which no store in the same function can alias. That
+holds for a Julia function on its own, but not once LLVM inlines it into a
+caller that constructs the object: there the caller's initializing stores and
+the callee's loads share a function, and LLVM folds the loads to `undef`.
+Enzyme inlines rule functions this way, so remove the claim from the loads of
+a function it is about to inline.
+"""
+function drop_const_alias_metadata!(f::LLVM.Function)::Bool
+    changed = false
+    for bb in f.blocks, inst in bb.instructions
+        isa(inst, LLVM.LoadInst) || continue
+        has_const_alias_claim(inst) || continue
+        md = inst.metadata
+        for kind in ("tbaa", "alias.scope", "noalias")
+            if haskey(md, kind)
+                delete!(md, kind)
+            end
+        end
+        changed = true
+    end
+    return changed
+end
+
 # LLVM's Inliner pass refuses to inline functions if their call sites have "jl_roots" operand bundles.
 # This pass finds all calls to alwaysinline functions carrying "jl_roots", extracts the roots,
 # wraps the call site in gc_preserve_begin/gc_preserve_end block pairs, and removes the "jl_roots" bundle
@@ -3607,6 +3665,9 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
     for f in collect(mod.functions)
         if isempty(f.blocks)
             continue
+        end
+        if haskey(f.function_attributes, :alwaysinline)
+            changed |= drop_const_alias_metadata!(f)
         end
 
         B = IRBuilder()
