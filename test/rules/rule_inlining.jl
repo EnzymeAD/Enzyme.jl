@@ -433,7 +433,11 @@ end
     LLVM.Context() do ctx
         kind = Enzyme.Compiler.arg_kind
         @test kind(Nothing) === :ghost
-        @test kind(Type{Float64}) === :ghost
+        @test kind(Enzyme.Compiler.TypeEgal{Float64}) === :ghost
+        # Since julia#62001 only `TypeEgal{T}` is a constant type.
+        @static if isdefined(Core, :TypeEgal)
+            @test kind(Type{Float64}) === :boxed
+        end
         @test kind(Const{typeof(sin)}) === :ghost
         @test kind(Float64) === :byval
         @test kind(UInt8) === :byval
