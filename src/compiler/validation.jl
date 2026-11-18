@@ -1488,8 +1488,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     inst.called_type,
                 )
                 # `ptr_arg` is constant data, which has no use list (RAUW on it
-                # asserts on LLVM 21+); retarget this call instead.
-                inst.called_operand = replaceWith
+                # asserts on LLVM 21+); retarget this call instead. With typed
+                # pointers the imported entry's type can differ from the call's.
+                inst.called_operand = LLVM.const_pointercast(replaceWith, LLVM.value_type(dest))
                 return errors
             end
 
