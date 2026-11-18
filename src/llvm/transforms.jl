@@ -804,7 +804,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt, enzyme_ctx::E
                                     if a.kind == READNONE_ATTR_KIND
                                         readonly = true
                                     end
-                                    if a.kind == NOCAPTURE_ATTR_KIND
+                                    if is_nocapture_attr(a)
                                         nocapture = true
                                     end
                                 end
@@ -2635,7 +2635,7 @@ function propagate_returned!(mod::LLVM.Module)
                                 fn.linkage == LLVM.Linkage.Private
                         ) &&
                             any(
-                            attr.kind == NOCAPTURE_ATTR_KIND for
+                            is_nocapture_attr(attr) for
                                 attr in collect(fn.parameter_attributes[i])
                         )
                         val = nothing
@@ -3320,7 +3320,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                     B = IRBuilder()
                     position!(B, LLVM.after(u))
                     cl = call!(B, funcT, rfunc, LLVM.Value[u])
-                    push!(cl.argument_attributes[1], EnumAttribute(:nocapture))
+                    push!(cl.argument_attributes[1], nocapture_attr())
                     push!(cl.argument_attributes[1], EnumAttribute(:readonly))
                 end
             end
@@ -3344,7 +3344,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                         p = fn.parameters[idx]
                         cl = call!(B, funcT, wfunc, LLVM.Value[p])
                         if isa(p.value_type, LLVM.PointerType)
-                            push!(cl.argument_attributes[1], EnumAttribute(:nocapture))
+                            push!(cl.argument_attributes[1], nocapture_attr())
                         end
                     end
                     for u in fn.users
@@ -3363,7 +3363,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                         inp = u.operands[idx]
                         cl = call!(B, funcT, rwfunc, LLVM.Value[inp])
                         if isa(inp.value_type, LLVM.PointerType)
-                            push!(cl.argument_attributes[1], EnumAttribute(:nocapture))
+                            push!(cl.argument_attributes[1], nocapture_attr())
                             push!(cl.argument_attributes[1], EnumAttribute(:readonly))
                         end
                     end
@@ -3394,7 +3394,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                             inp = u.operands[idx]
                             cl = call!(B, funcT, sfunc, LLVM.Value[inp])
                             if isa(inp.value_type, LLVM.PointerType)
-                                push!(cl.argument_attributes[1], EnumAttribute(:nocapture))
+                                push!(cl.argument_attributes[1], nocapture_attr())
                                 push!(cl.argument_attributes[1], EnumAttribute(:readonly))
                             end
                         end
@@ -3409,7 +3409,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                     inp = u.operands[idx]
                     cl = call!(B, funcT, sfunc, LLVM.Value[inp])
                     if isa(inp.value_type, LLVM.PointerType)
-                        push!(cl.argument_attributes[1], EnumAttribute(:nocapture))
+                        push!(cl.argument_attributes[1], nocapture_attr())
                         push!(cl.argument_attributes[1], EnumAttribute(:readonly))
                     end
                 end

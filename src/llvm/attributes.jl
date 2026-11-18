@@ -570,7 +570,7 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_nocache"))
-                push!(fn.parameter_attributes[1], LLVM.EnumAttribute(:nocapture))
+                push!(fn.parameter_attributes[1], nocapture_attr())
             end
         end
     end
@@ -1036,7 +1036,7 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(fn.parameter_attributes[3], LLVM.EnumAttribute(:readonly))
-                push!(fn.parameter_attributes[3], LLVM.EnumAttribute(:nocapture))
+                push!(fn.parameter_attributes[3], nocapture_attr())
             end
         end
     end
@@ -1049,7 +1049,7 @@ function annotate!(mod::LLVM.Module)
                 push!(fn.parameter_attributes[4], LLVM.StringAttribute("enzyme_inactive"))
                 if fn.parameters[4].value_type isa LLVM.PointerType
                     push!(fn.parameter_attributes[4], LLVM.EnumAttribute(:writeonly))
-                    push!(fn.parameter_attributes[4], LLVM.EnumAttribute(:nocapture))
+                    push!(fn.parameter_attributes[4], nocapture_attr())
                 end
                 fn.memory_effects = LLVM.MemoryEffects(argmem = :readwrite)
             end

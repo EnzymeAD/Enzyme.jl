@@ -503,7 +503,7 @@ function declare_ntuple_type!(mod::LLVM.Module)
         memory_effects = LLVM.MemoryEffects(:none),
     )
     if isa(fn, LLVM.Function) && isempty(collect(fn.parameter_attributes[1]))
-        push!(fn.parameter_attributes[1], EnumAttribute(:nocapture))
+        push!(fn.parameter_attributes[1], nocapture_attr())
         push!(fn.parameter_attributes[1], EnumAttribute(:readonly))
     end
     return fn, FT
@@ -570,7 +570,7 @@ function define_ntuple_type!(mod::LLVM.Module)
         )
         if isa(apply_tuple_v, LLVM.Function) && isempty(collect(apply_tuple_v.parameter_attributes[1]))
             push!(apply_tuple_v.parameter_attributes[1], EnumAttribute(:readonly))
-            push!(apply_tuple_v.parameter_attributes[1], EnumAttribute(:nocapture))
+            push!(apply_tuple_v.parameter_attributes[1], nocapture_attr())
         end
         roots = [LLVM.OperandBundle("jl_roots", LLVM.Value[eltype])]
         ret!(builder, call!(builder, apply_tuple_v_FT, apply_tuple_v, LLVM.Value[buf, n], roots))
