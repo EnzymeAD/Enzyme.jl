@@ -878,23 +878,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt, enzyme_ctx::E
                         src.metadata["enzyme_type"] =
                             to_md(typetree_in_world(world, Ptr{Cvoid}, ctx, dl, seen), ctx)
                     end
-                    # LLVM 22 dropped the size operand of lifetime intrinsics.
-                    lt_args = if LLVM.version() >= v"22"
-                        LLVM.Value[dst0]
-                    else
-                        LLVM.Value[LLVM.ConstantInt(Int64(LLVM.storage_size(dl, elty))), dst0]
-                    end
-                    FT = LLVM.FunctionType(
-                        LLVM.VoidType(),
-                        LLVMType[a.value_type for a in lt_args],
-                    )
-                    lifetimestart, _ = get_function!(mod, LLVM.overloaded_name(LLVM.Intrinsic("llvm.lifetime.start"), [dst0.value_type]), FT)
-                    call!(
-                        B,
-                        FT,
-                        lifetimestart,
-                        lt_args,
-                    )
+                    LLVM.lifetime_start!(B, dst0)
                     store!(B, src, dst)
                     push!(todel, copy)
                 end
