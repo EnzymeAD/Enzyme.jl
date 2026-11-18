@@ -161,3 +161,75 @@ union_roots_direct(x, v, b) = union_roots_primal(x, v, b)
     @test res[1][1] ≈ 7.0
     @test dv ≈ [3.0, 3.0]
 end
+
+# Batched forward rules for a union return with GC pointers. The shadows are an
+# `NTuple` or a `BatchDuplicated`, which hold each union boxed.
+@noinline union_roots_batch(x, v, b) = b ? (x, v) : nothing
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(union_roots_batch)}, ::Type,
+        x::Union{Duplicated, BatchDuplicated}, v::Union{Duplicated, BatchDuplicated}, b::Const
+    )
+    primal::UnionWithRoots = union_roots_batch(x.val, v.val, b.val)
+    if x isa Duplicated
+        shadow::UnionWithRoots = b.val ? (x.dval, v.dval) : nothing
+        needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        needs_both && return Duplicated{UnionWithRoots}(primal, shadow)
+        EnzymeRules.needs_shadow(config) && return shadow
+    else
+        N = EnzymeRules.width(config)
+        shadows = ntuple(i -> (b.val ? (x.dval[i], v.dval[i]) : nothing)::UnionWithRoots, Val(N))
+        needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        needs_both && return BatchDuplicated{UnionWithRoots, N}(primal, shadows)
+        EnzymeRules.needs_shadow(config) && return shadows
+    end
+    return EnzymeRules.needs_primal(config) ? primal : nothing
+end
+union_roots_batch_caller(x, v, b) = (r = union_roots_batch(x, v, b); r === nothing ? 0.0 : r[1] * sum(r[2]))
+union_roots_batch_direct(x, v, b) = union_roots_batch(x, v, b)
+
+# The union return is inactive (its members hold only integers), so the rule
+# only returns the primal, in place of the original split union.
+const ConstUnionWithRoots = Union{Nothing, Tuple{Int, Vector{Int}}}
+@noinline union_const_primal(x, n) = x > 0 ? (n, [n]) : nothing
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(union_const_primal)}, ::Type{<:Const},
+        x::Union{Duplicated, BatchDuplicated}, n::Const
+    )
+    primal::ConstUnionWithRoots = union_const_primal(x.val, n.val)
+    return EnzymeRules.needs_primal(config) ? primal : nothing
+end
+union_const_caller(x, n) = (r = union_const_primal(x, n); r === nothing ? 0.0 : x * r[1] * r[2][1])
+
+@testset "Batched forward rule for a union return with GC pointers" begin
+    v = [1.0, 2.0]
+    @test autodiff(Forward, union_roots_batch_caller, Duplicated(3.0, 1.0), Duplicated(v, ones(2)), Const(true))[1] ≈ 9.0
+    res = autodiff(
+        Forward, union_roots_batch_caller, BatchDuplicated(3.0, (1.0, 2.0)),
+        BatchDuplicated(v, (ones(2), 2 .* ones(2))), Const(true)
+    )[1]
+    @test res[1] ≈ 9.0
+    @test res[2] ≈ 18.0
+    @test autodiff(
+        Forward, union_roots_batch_caller, BatchDuplicated(3.0, (1.0, 2.0)),
+        BatchDuplicated(v, (ones(2), 2 .* ones(2))), Const(false)
+    )[1] |> values == (0.0, 0.0)
+
+    dv = (ones(2), 2 .* ones(2))
+    res = autodiff(Forward, union_roots_batch_direct, BatchDuplicated(3.0, (1.0, 2.0)), BatchDuplicated(v, dv), Const(true))[1]
+    @test res[1][1] ≈ 1.0
+    @test res[1][2] === dv[1]
+    @test res[2][1] ≈ 2.0
+    @test res[2][2] === dv[2]
+
+    res = autodiff(ForwardWithPrimal, union_roots_batch_direct, BatchDuplicated(3.0, (1.0, 2.0)), BatchDuplicated(v, dv), Const(true))
+    @test res[1][1][1] ≈ 1.0
+    @test res[1][2][1] ≈ 2.0
+    @test res[2][1] ≈ 3.0
+    @test res[2][2] === v
+
+    @test autodiff(Forward, union_const_caller, Duplicated(3.0, 1.0), Const(2))[1] ≈ 4.0
+    res = autodiff(Forward, union_const_caller, BatchDuplicated(3.0, (1.0, 2.0)), Const(2))[1]
+    @test res[1] ≈ 4.0
+    @test res[2] ≈ 8.0
+    @test autodiff(Forward, union_const_caller, BatchDuplicated(-3.0, (1.0, 2.0)), Const(2))[1] |> values == (0.0, 0.0)
+end
