@@ -698,7 +698,8 @@ function abs_typeof(
         end
         # Type tag is arg 3
         if nm == "jl_alloc_genericmemory_unchecked" ||
-                nm == "ijl_alloc_genericmemory_unchecked"
+                nm == "ijl_alloc_genericmemory_unchecked" ||
+                nm == "julia.gc_alloc_memory"
             vals = absint(arg.operands[3], enzyme_ctx, partial, true, #=typetag=# true)
             @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)

@@ -1128,6 +1128,10 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), enz
             res = array.operands[2]
             return res
         end
+        if nm == "julia.gc_alloc_memory"
+            # julia.gc_alloc_memory(task, nbytes, type, length, zeroinit)
+            return array.operands[4]
+        end
         if nm in (
                 "jl_alloc_genericmemory_unchecked",
                 "ijl_alloc_genericmemory_unchecked",
@@ -1182,6 +1186,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), 
         if nm in (
                 "jl_alloc_genericmemory_unchecked",
                 "ijl_alloc_genericmemory_unchecked",
+                "julia.gc_alloc_memory",
             )
             # This is number of bytes not number of elements
             res = array.operands[2]
