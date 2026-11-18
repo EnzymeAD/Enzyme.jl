@@ -1274,12 +1274,18 @@ end
 Return the shadow of a split-union return of type `uty` from `dval`, the boxed
 shadow (or an `NTuple` of `width` of them), with [`boxed_union_value!`](@ref).
 `droots` holds the shadow return roots.
+
+An `NTuple` of such unions is not a concrete type, so a rule returns it (or a
+`BatchDuplicated` holds it) as a boxed tuple. Each shadow is then read from the
+tuple, boxed, at run time.
 """
 function boxed_union_shadow!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, dval::LLVM.Value, droots::LLVM.Value, @nospecialize(UT::Type), width::Integer)::LLVM.Value
     width == 1 && return boxed_union_value!(B, uty, dval, droots, UT)
+    boxed_tuple = dval.value_type isa LLVM.PointerType
     shadowV = LLVM.UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, uty)))
     for idx in 1:width
-        lane = boxed_union_value!(B, uty, extract_value!(B, dval, idx - 1), extract_value!(B, droots, idx - 1), UT)
+        dlane = boxed_tuple ? emit_nthfield!(B, dval, Int(idx - 1)) : extract_value!(B, dval, idx - 1)
+        lane = boxed_union_value!(B, uty, dlane, extract_value!(B, droots, idx - 1), UT)
         shadowV = insert_value!(B, shadowV, lane, idx - 1)
     end
     return shadowV
@@ -1340,8 +1346,9 @@ end
     if rule_sret_union
         # The rule returns the split union `RealRt` itself, the primal or the
         # shadow. Let it write straight into the union buffer and roots of the
-        # original call or of its shadow.
-        if fwd_RT != RealRt || width != 1
+        # original call or of its shadow. In batch mode only the primal is a
+        # single union: the shadows are an `NTuple`, which holds them boxed.
+        if fwd_RT != RealRt || (width != 1 && !(RT <: Const))
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
             emit_error(B, orig, (msg2, fmi, world), ForwardRuleReturnError{C, RT, fwd_RT})
