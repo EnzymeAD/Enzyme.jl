@@ -1291,6 +1291,25 @@ function boxed_union_shadow!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, dval::LLVM.V
     return shadowV
 end
 
+"""
+    batched_shadow!(B, dval, uty, width) -> LLVM.Value
+
+Return the shadows `dval` of a batched rule as the `[width x uty]` shadow of a
+call that returns `uty`. If the element type of the shadows is not concrete, the
+`NTuple` of shadows is not either, and the rule returns it (or a `BatchDuplicated`
+holds it) as a boxed tuple: each shadow is then read from it, boxed, at run time.
+"""
+function batched_shadow!(B::LLVM.IRBuilder, dval::LLVM.Value, uty::LLVM.LLVMType, width::Integer)::LLVM.Value
+    width == 1 && return dval
+    sty = LLVM.LLVMType(API.EnzymeGetShadowType(width, uty))
+    (dval.value_type == sty || !(dval.value_type isa LLVM.PointerType)) && return dval
+    shadowV = LLVM.UndefValue(sty)
+    for idx in 1:width
+        shadowV = insert_value!(B, shadowV, emit_nthfield!(B, dval, Int(idx - 1)), idx - 1)
+    end
+    return shadowV
+end
+
 @register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) &&
             is_constant_inst(gutils, orig) &&
@@ -1534,7 +1553,7 @@ end
                     end
                 end
             else
-                shadowV = res.ref
+                shadowV = batched_shadow!(B, res, orig.value_type, width).ref
             end
         else
             ST = if width == 1
@@ -1597,7 +1616,7 @@ end
                 end
             else
                 normalV = extract_value!(B, res, 0).ref
-                shadowV = extract_value!(B, res, 1).ref
+                shadowV = batched_shadow!(B, extract_value!(B, res, 1), orig.value_type, width).ref
             end
         end
     end
