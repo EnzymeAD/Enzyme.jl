@@ -2064,25 +2064,6 @@ const DumpPreNestedCheck = Ref(false)
 const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
-"""
-    job_namespace(job)
-
-The suffix for the names of the functions that a compilation of `job` exports, so that other
-modules can refer to them by name. It is derived from the job itself: `hash(job)`, which covers
-its source, configuration and world, and which [`cached_compilation`](@ref) also uses as the
-thunk's key.
-
-Julia's codegen can't provide such names: since julia#60031 its counters are local to the module,
-so independent compilations reuse names like `julia_f_0`. With the job as the suffix, two
-compilations export the same name only if they compile the same job. That is the idea behind
-GPUCompiler's `relocation_namespace`, with the whole job instead of the signature, which on its
-own doesn't tell Enzyme's jobs apart.
-
-Only the modules that are linked into one module need such names (see [`nested_codegen!`](@ref)).
-The JIT does not: each thunk has its own JITDylib (see `JIT.dylib`).
-"""
-job_namespace(@nospecialize(job::CompilerJob)) = string(hash(job); base = 62)
-
 function nested_codegen!(
         mode::API.CDerivativeMode,
         mod::LLVM.Module,
@@ -2163,10 +2144,16 @@ function nested_codegen!(
     lfn = otherMod.functions[entry]
 
     # The declaration below is bound to this definition by name when the modules are linked.
-    # Name the entry after the job: Julia's name may also be the entry of another nested
-    # module, or a function of `mod`.
-    entry = entry * "_" * job_namespace(job)
-    LLVM.name!(lfn, entry)
+    # Since julia#60031, Julia's counters are local to the module, so Julia's name can also be
+    # the entry of another nested module, or a function of `mod`. Add GPUCompiler's namespace
+    # of the job to the name, which is the mangled signature. One compilation has at most one
+    # nested module for each MethodInstance, so the signature tells the entries apart.
+    # GPUCompiler 1.x only supports Julia versions where Julia's names are unique in the
+    # session.
+    @static if HAS_GPUCOMPILER_2
+        entry = entry * "_" * GPUCompiler.relocation_namespace(job)
+        LLVM.name!(lfn, entry)
+    end
     # The entry is all that `mod` refers to. Everything else the module defines keeps the names
     # Julia gave it, which other modules reuse (e.g. the slot `ccall_jl_n_threads_per_pool_0`
     # of a `ccall`), so make it local to the module. The Julia values it refers to by name are

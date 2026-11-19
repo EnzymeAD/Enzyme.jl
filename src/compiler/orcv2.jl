@@ -12,10 +12,10 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.JuliaOJIT
+    # The JITDylib that defines the globals of Enzyme. `lookup(name)` also uses it.
     # Before Julia 1.14, this is the one JITDylib that Julia's JIT gives to its users. Enzyme
-    # adds each module to it. Since Julia 1.14, each module has its own JITDylib (see `dylib`).
-    # This one stays empty. `lookup(name)` uses it to find the names that Julia and the
-    # process define.
+    # adds each module to it. Since Julia 1.14, this is Julia's `JuliaGlobals`, and each module
+    # has its own JITDylib (see `dylib`).
     jd::LLVM.JITDylib
     lctm::Union{LLVM.LazyCallThroughManager, Nothing}
     ism::Union{LLVM.IndirectStubsManager, Nothing}
@@ -96,22 +96,20 @@ function setup_globals()
         # symbols of the process (JuliaLang/julia#60988). Julia's own JITDylib also resolves
         # the names in `JuliaGlobals`. Julia compiles the thunks of the `InlineABI`, which
         # refer to the globals of Enzyme.
-        jd_main = JITDylib(lljit, "enzyme")
         jd_globals = something(LLVM.lookup_dylib(es, "JuliaGlobals"))
     else
         # Julia's JIT has one JITDylib for all its users.
-        jd_main = lljit.external_dylib
-        jd_globals = jd_main
-        LLVM.add!(jd_main, DynamicLibrarySearchGenerator(lljit))
+        jd_globals = lljit.external_dylib
+        LLVM.add!(jd_globals, DynamicLibrarySearchGenerator(lljit))
     end
 
     try
         lctm = LLVM.LocalLazyCallThroughManager(lljit.triple, es)
         ism = LLVM.LocalIndirectStubsManager(lljit.triple)
-        jit[] = CompilerInstance(lljit, jd_main, lctm, ism)
+        jit[] = CompilerInstance(lljit, jd_globals, lctm, ism)
     catch err
         @warn "OrcV2 initialization failed with" err
-        jit[] = CompilerInstance(lljit, jd_main, nothing, nothing)
+        jit[] = CompilerInstance(lljit, jd_globals, nothing, nothing)
     end
 
     return jd_globals, lljit
