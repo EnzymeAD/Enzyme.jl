@@ -53,8 +53,9 @@ struct Const{T} <: Annotation{T}
     val::T
 end
 
-# To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
-Const(::Type{T}) where {T} = Const{Type{T}}(T)
+# To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`. `Core.Typeof` is
+# `Type{T}` before Julia 1.14 and `Core.TypeEgal{T}`, the type Julia dispatches on, since.
+Const(::Type{T}) where {T} = Const{Core.Typeof(T)}(T)
 
 """
     Active(x)
