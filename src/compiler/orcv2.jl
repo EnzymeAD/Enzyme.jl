@@ -115,20 +115,16 @@ function setup_globals()
     return jd_globals, lljit
 end
 
-"""
-    dylib()
-
-Return the JITDylib to add one module to.
-
-Since Julia 1.14 (JuliaLang/julia#60988), each call creates a new JITDylib. The new JITDylib
-resolves the names that Julia, the process and `setup_globals` define. No other JITDylib
-resolves the names that the module defines. Thus two modules can define the same name. Each
-module must define all other names that it refers to. Julia's codegen gives names that are
-unique only in one module (JuliaLang/julia#60031).
-
-Before Julia 1.14, Julia's JIT has one JITDylib for all its users. There, Julia's codegen
-gives names that are unique in the session.
-"""
+# Return the JITDylib to add one module to.
+#
+# Since Julia 1.14 (JuliaLang/julia#60988), each call creates a new JITDylib. The new JITDylib
+# resolves the names that Julia, the process and `setup_globals` define. No other JITDylib
+# resolves the names that the module defines. Thus two modules can define the same name. Each
+# module must define all other names that it refers to. Julia's codegen gives names that are
+# unique only in one module (JuliaLang/julia#60031).
+#
+# Before Julia 1.14, Julia's JIT has one JITDylib for all its users. There, Julia's codegen
+# gives names that are unique in the session.
 function dylib()
     @static if VERSION >= v"1.14.0-DEV.2171"
         return JITDylib(jit[].jit, "enzyme")

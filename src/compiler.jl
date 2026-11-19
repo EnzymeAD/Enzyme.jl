@@ -192,6 +192,60 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
 # both majors; every version split below keys on this one probe.
 const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
 
+@static if HAS_GPUCOMPILER_2
+    # Short, deterministic names of the annotations, for `relocation_namespace`.
+    function annotation_tag(@nospecialize(T))
+        T = Base.unwrap_unionall(T)
+        T isa DataType || return "U"
+        name = nameof(T)
+        name === :Const && return "C"
+        name === :Active && return "A"
+        name === :Duplicated && return "D"
+        name === :DuplicatedNoNeed && return "N"
+        name === :BatchDuplicated && return "B"
+        name === :BatchDuplicatedNoNeed && return "b"
+        name === :MixedDuplicated && return "M"
+        name === :BatchMixedDuplicated && return "m"
+        return string(name)
+    end
+
+    # GPUCompiler gives the names of a job (relocation slots, and the entry of a nested module
+    # in `nested_codegen!`) its `relocation_namespace`, which is the mangled signature. Enzyme
+    # can compile one signature with different options, so add the options to the namespace.
+    # The result must be the same in each session, so it does not use `hash` or the world.
+    function GPUCompiler.relocation_namespace(
+            @nospecialize(job::CompilerJob{<:Any, PrimalCompilerParams})
+        )
+        default = invoke(GPUCompiler.relocation_namespace, Tuple{CompilerJob}, job)
+        return default * "_p" * string(Int(job.config.params.mode))
+    end
+
+    function GPUCompiler.relocation_namespace(
+            @nospecialize(job::CompilerJob{<:Any, <:EnzymeCompilerParams})
+        )
+        default = invoke(GPUCompiler.relocation_namespace, Tuple{CompilerJob}, job)
+        params = job.config.params
+        io = IOBuffer()
+        print(io, default, "_e", Int(params.mode), "w", params.width)
+        print(io, "r", annotation_tag(params.rt), "a")
+        for T in params.TT.parameters
+            print(io, annotation_tag(T))
+        end
+        print(io, "_", nameof(params.ABI), "_")
+        for flag in (
+                params.run_enzyme, params.abiwrap, params.returnPrimal, params.shadowInit,
+                params.err_if_func_written, params.runtimeActivity, params.strongZero,
+            )
+            print(io, flag ? '1' : '0')
+        end
+        print(io, "m")
+        for flag in params.modifiedBetween
+            print(io, flag ? '1' : '0')
+        end
+        return String(take!(io))
+    end
+end
+
 # GPUCompiler 1.x names the runtime library per back-end; 2.x derives it from the cache owner.
 @static if !HAS_GPUCOMPILER_2
     # TODO: encode debug build or not in the compiler job
@@ -2146,8 +2200,8 @@ function nested_codegen!(
     # The declaration below is bound to this definition by name when the modules are linked.
     # Since julia#60031, Julia's counters are local to the module, so Julia's name can also be
     # the entry of another nested module, or a function of `mod`. Add GPUCompiler's namespace
-    # of the job to the name, which is the mangled signature. One compilation has at most one
-    # nested module for each MethodInstance, so the signature tells the entries apart.
+    # of the job to the name: the mangled signature and the Enzyme options (see the
+    # `relocation_namespace` methods above).
     # GPUCompiler 1.x only supports Julia versions where Julia's names are unique in the
     # session.
     @static if HAS_GPUCOMPILER_2
