@@ -955,7 +955,10 @@ is inlined and discarded just as a lone import was.
 function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
     enzyme_ctx = enzyme_context()
     cached = autodiff_cache[ptr]
-    pname = cached.entry
+    # Add the address of the thunk to the name of the entry. Two thunks can have the same
+    # entry name: each thunk has its own JITDylib, and Julia's codegen gives names that are
+    # unique only in one module (JuliaLang/julia#60031).
+    pname = cached.entry * "_" * string(convert(UInt, ptr); base = 62)
 
     if haskey(enzyme_ctx.imported_thunks, ptr)
         if haskey(mod.functions, pname)
@@ -970,7 +973,8 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
 
     @assert !haskey(mod.functions, pname) || isdeclaration(mod.functions[pname])
     pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, cached.bitcode))
-    @assert haskey(pmod.functions, pname)
+    @assert haskey(pmod.functions, cached.entry)
+    LLVM.name!(pmod.functions[cached.entry], pname)
 
     # Everything the blob carries besides the entry is internal, so that a
     # second blob carrying the same Julia function does not collide with it.
@@ -980,9 +984,12 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
         end
     end
 
+    # Make the globals that the blob defines internal too, and keep their initializers. The
+    # JITDylib of this compilation does not resolve the definitions in the JITDylib of the
+    # thunk.
     for glob in pmod.globals
-        if glob.linkage == LLVM.Linkage.External
-            glob.initializer = nothing
+        if !isdeclaration(glob) && glob.linkage == LLVM.Linkage.External
+            glob.linkage = LLVM.Linkage.Internal
         end
     end
 

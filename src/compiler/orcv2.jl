@@ -12,7 +12,10 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.JuliaOJIT
-    # the dylib everything is added to, which also defines Enzyme's globals
+    # Before Julia 1.14, this is the one JITDylib that Julia's JIT gives to its users. Enzyme
+    # adds each module to it. Since Julia 1.14, each module has its own JITDylib (see `dylib`).
+    # This one stays empty. `lookup(name)` uses it to find the names that Julia and the
+    # process define.
     jd::LLVM.JITDylib
     lctm::Union{LLVM.LazyCallThroughManager, Nothing}
     ism::Union{LLVM.IndirectStubsManager, Nothing}
@@ -85,16 +88,23 @@ function setup_globals()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    # before Julia 1.14, Julia's JIT has a single JITDylib that is shared by all its users
-    jd_main = @static if VERSION >= v"1.14.0-DEV.2171"
-        JITDylib(lljit, "enzyme")
+    es = lljit.execution_session
+
+    # `jd_globals` is the JITDylib that defines the globals of Enzyme for each module.
+    @static if VERSION >= v"1.14.0-DEV.2171"
+        # Each JITDylib that Julia's JIT creates resolves the names in `JuliaGlobals` and the
+        # symbols of the process (JuliaLang/julia#60988). Julia's own JITDylib also resolves
+        # the names in `JuliaGlobals`. Julia compiles the thunks of the `InlineABI`, which
+        # refer to the globals of Enzyme.
+        jd_main = JITDylib(lljit, "enzyme")
+        jd_globals = something(LLVM.lookup_dylib(es, "JuliaGlobals"))
     else
-        lljit.external_dylib
+        # Julia's JIT has one JITDylib for all its users.
+        jd_main = lljit.external_dylib
+        jd_globals = jd_main
+        LLVM.add!(jd_main, DynamicLibrarySearchGenerator(lljit))
     end
 
-    LLVM.add!(jd_main, DynamicLibrarySearchGenerator(lljit))
-
-    es = lljit.execution_session
     try
         lctm = LLVM.LocalLazyCallThroughManager(lljit.triple, es)
         ism = LLVM.LocalIndirectStubsManager(lljit.triple)
@@ -104,15 +114,37 @@ function setup_globals()
         jit[] = CompilerInstance(lljit, jd_main, nothing, nothing)
     end
 
-    return jd_main, lljit
+    return jd_globals, lljit
+end
+
+"""
+    dylib()
+
+Return the JITDylib to add one module to.
+
+Since Julia 1.14 (JuliaLang/julia#60988), each call creates a new JITDylib. The new JITDylib
+resolves the names that Julia, the process and `setup_globals` define. No other JITDylib
+resolves the names that the module defines. Thus two modules can define the same name. Each
+module must define all other names that it refers to. Julia's codegen gives names that are
+unique only in one module (JuliaLang/julia#60031).
+
+Before Julia 1.14, Julia's JIT has one JITDylib for all its users. There, Julia's codegen
+gives names that are unique in the session.
+"""
+function dylib()
+    @static if VERSION >= v"1.14.0-DEV.2171"
+        return JITDylib(jit[].jit, "enzyme")
+    else
+        return jit[].jd
+    end
 end
 
 function __init__()
-    jd_main, lljit = setup_globals()
+    jd_globals, lljit = setup_globals()
 
     if Sys.iswindows() && Int === Int64
         # TODO can we check isGNU?
-        define_absolute_symbol(jd_main, lljit, "___chkstk_ms")
+        define_absolute_symbol(jd_globals, lljit, "___chkstk_ms")
     end
 
     # The well-known Julia values, defined in one go.
@@ -126,7 +158,7 @@ function __init__()
         ptr = Compiler.unsafe_to_ptr(Compiler.unbind(v))
         push!(pairs, mangle(lljit, "ejl_" * k) => ptr)
     end
-    define!(jd_main, absolute_symbols(pairs))
+    define!(jd_globals, absolute_symbols(pairs))
 
     return atexit() do
         dispose(tm[])
@@ -194,8 +226,7 @@ function get_trampoline(job)
     mode = job.config.params.mode
     use_primal = mode == API.DEM_ReverseModePrimal
 
-    # We could also use one dylib per job
-    jd = compiler.jd
+    jd = dylib()
 
     sym = String(gensym(:func))
     _sym = String(gensym(:func))
@@ -247,7 +278,7 @@ end
 function add!(mod)
     prepare!(mod)
     lljit = jit[].jit
-    jd = jit[].jd
+    jd = dylib()
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
     return jd

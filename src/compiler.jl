@@ -2064,6 +2064,25 @@ const DumpPreNestedCheck = Ref(false)
 const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
+"""
+    job_namespace(job)
+
+The suffix for the names of the functions that a compilation of `job` exports, so that other
+modules can refer to them by name. It is derived from the job itself: `hash(job)`, which covers
+its source, configuration and world, and which [`cached_compilation`](@ref) also uses as the
+thunk's key.
+
+Julia's codegen can't provide such names: since julia#60031 its counters are local to the module,
+so independent compilations reuse names like `julia_f_0`. With the job as the suffix, two
+compilations export the same name only if they compile the same job. That is the idea behind
+GPUCompiler's `relocation_namespace`, with the whole job instead of the signature, which on its
+own doesn't tell Enzyme's jobs apart.
+
+Only the modules that are linked into one module need such names (see [`nested_codegen!`](@ref)).
+The JIT does not: each thunk has its own JITDylib (see `JIT.dylib`).
+"""
+job_namespace(@nospecialize(job::CompilerJob)) = string(hash(job); base = 62)
+
 function nested_codegen!(
         mode::API.CDerivativeMode,
         mod::LLVM.Module,
@@ -2141,12 +2160,28 @@ function nested_codegen!(
     if DumpPostNestedOpt[]
         API.EnzymeDumpModuleRef(otherMod.ref)
     end
+    lfn = otherMod.functions[entry]
+
+    # The declaration below is bound to this definition by name when the modules are linked.
+    # Name the entry after the job: Julia's name may also be the entry of another nested
+    # module, or a function of `mod`.
+    entry = entry * "_" * job_namespace(job)
+    LLVM.name!(lfn, entry)
+    # The entry is all that `mod` refers to. Everything else the module defines keeps the names
+    # Julia gave it, which other modules reuse (e.g. the slot `ccall_jl_n_threads_per_pool_0`
+    # of a `ccall`), so make it local to the module. The Julia values it refers to by name are
+    # declarations (see `make_slots_symbolic!`), and stay external.
+    for gv in Iterators.flatten((otherMod.functions, otherMod.globals))
+        (gv == lfn || isdeclaration(gv)) && continue
+        if !(gv.linkage in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage))
+            gv.linkage = LLVM.API.LLVMInternalLinkage
+        end
+    end
 
     # 4) Record module to link
     push!(enzyme_ctx.modules_to_link, otherMod)
 
     # Declare the function in mod so it can be called
-    lfn = otherMod.functions[entry]
     if alwaysinline
         # A method declared `@noinline` carries that attribute. Remove it: this
         # path always inlines, and `noinline` conflicts with `alwaysinline`.
@@ -2157,6 +2192,7 @@ function nested_codegen!(
     lfn.linkage = LLVM.Linkage.External
     FT = lfn.function_type
     decl = LLVM.Function(mod, entry, FT)
+    @assert LLVM.name(decl) == entry
 
     # Copy function, parameter and return attributes
     append!(decl.function_attributes, lfn.function_attributes)
@@ -7333,6 +7369,20 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
         augmented_primalf !== nothing && fn === augmented_primalf && continue
         isempty(fn.blocks) && continue
         fn.linkage = LLVM.Linkage.LinkerPrivate
+    end
+    # The same goes for the globals the module defines: their names come from counters that
+    # are local to the module since julia#60031, so another thunk linked next to this one can
+    # define the same name (e.g. the slot `ccall_jl_n_threads_per_pool_0` of a `ccall`). The
+    # Julia values the module refers to by name are declarations (see `make_slots_symbolic!`).
+    # A compilation that imports this thunk (see `import_cached_autodiff!`) also needs the
+    # definitions: its JITDylib does not resolve the names that this thunk defines.
+    # Device modules keep theirs: GPUCompiler binds its relocation records to them by name.
+    if !device_module
+        for gv in mod.globals
+            isdeclaration(gv) && continue
+            gv.linkage in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage) && continue
+            gv.linkage = LLVM.API.LLVMInternalLinkage
+        end
     end
 
 
