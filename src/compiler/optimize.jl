@@ -510,6 +510,21 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             end
         end
     end
+    # Since LLVM 22, lifetime intrinsics must refer directly to an alloca (or
+    # poison). Argument promotion above may leave them on other pointers.
+    if LLVM.version() >= v"22"
+        for name in ("llvm.lifetime.start.p0", "llvm.lifetime.end.p0")
+            haskey(mod.functions, name) || continue
+            for u in collect(mod.functions[name].uses)
+                ci = u.user
+                ci isa LLVM.CallInst || continue
+                ptr = last(collect(ci.arguments))
+                if !(ptr isa LLVM.AllocaInst || ptr isa LLVM.PoisonValue)
+                    erase!(ci)
+                end
+            end
+        end
+    end
     verifier_msg = verification_error(mod)
     if verifier_msg !== nothing
         throw(
