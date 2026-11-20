@@ -84,14 +84,21 @@ jobs:
             libEnzyme: packaged
             version: '1.13'
             assertions: true
-          # Enzyme does not support Julia 1.14 yet. This job shows the progress and does not
-          # block PRs. juliaup supplies the assertions build, thus CI does not compile Julia.
+          # Enzyme does not support Julia 1.14 yet. These jobs show the progress and do not
+          # block PRs. juliaup supplies the assertions build, thus CI does not compile Julia;
+          # setup-julia supplies the regular 1.14 prerelease.
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
             version: '1.14'
             assertions: true
             juliaup_channel: '1.14+assert'
+            allow_failure: true
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.14'
+            assertions: false
             allow_failure: true
           - os: ubuntu-24.04
             arch: default
