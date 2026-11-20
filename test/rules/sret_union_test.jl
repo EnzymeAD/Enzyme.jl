@@ -343,3 +343,42 @@ union_inactive_roots_caller(x, n, b) = (r = union_inactive_roots(x, n, b); r ===
     res = autodiff(Forward, union_inactive_roots_caller, BatchDuplicated(3.0, (1.0, 2.0)), Const(2), Const(true))[1]
     @test values(res) == (200.0, 400.0)
 end
+
+# The union buffer holds only an integer. The return roots hold the active data.
+const UnionWithConstBuffer = Union{Nothing, Tuple{Int, Vector{Float64}}}
+@noinline union_const_buffer(n, v, b) = b ? (n, v) : nothing
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(union_const_buffer)}, ::Type,
+        n::Const, v::Union{Duplicated, BatchDuplicated}, b::Const
+    )
+    primal::UnionWithConstBuffer = union_const_buffer(n.val, v.val, b.val)
+    needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+    if v isa Duplicated
+        shadow::UnionWithConstBuffer = b.val ? (n.val, v.dval) : nothing
+        needs_both && return Duplicated{UnionWithConstBuffer}(primal, shadow)
+        EnzymeRules.needs_shadow(config) && return shadow
+    else
+        N = EnzymeRules.width(config)
+        shadows = ntuple(i -> (b.val ? (n.val, v.dval[i]) : nothing)::UnionWithConstBuffer, Val(N))
+        needs_both && return BatchDuplicated{UnionWithConstBuffer, N}(primal, shadows)
+        EnzymeRules.needs_shadow(config) && return shadows
+    end
+    return EnzymeRules.needs_primal(config) ? primal : nothing
+end
+union_const_buffer_caller(n, v, b) = (r = union_const_buffer(n, v, b); r === nothing ? 0.0 : r[1] * sum(r[2]))
+union_const_buffer_direct(n, v, b) = union_const_buffer(n, v, b)
+
+@testset "Forward rule for a union return with an inactive buffer" begin
+    v = [1.0, 2.0]
+    @test autodiff(Forward, union_const_buffer_caller, Const(5), Duplicated(v, ones(2)), Const(true))[1] ≈ 10.0
+    res = autodiff(Forward, union_const_buffer_caller, Const(5), BatchDuplicated(v, (ones(2), 2 .* ones(2))), Const(true))[1]
+    @test res[1] ≈ 10.0
+    @test res[2] ≈ 20.0
+    @test autodiff(Forward, union_const_buffer_caller, Const(5), BatchDuplicated(v, (ones(2), 2 .* ones(2))), Const(false))[1] |> values == (0.0, 0.0)
+
+    # Only the shadow is needed, so the rule returns the split union itself.
+    dv = ones(2)
+    res = autodiff(Forward, union_const_buffer_direct, Const(5), Duplicated(v, dv), Const(true))[1]
+    @test res[2] === dv
+    @test autodiff(Forward, union_const_buffer_direct, Const(5), Duplicated(v, dv), Const(false))[1] === nothing
+end
