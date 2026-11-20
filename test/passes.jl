@@ -230,6 +230,9 @@ end
 
         ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
         Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
+        # A second thunk whose entry has the same name (JuliaLang/julia#60031).
+        other_ptr = reinterpret(Ptr{Cvoid}, UInt(0x4078))
+        Enzyme.Compiler.autodiff_cache[other_ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
                 Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
@@ -249,14 +252,23 @@ end
                 # The blob is not imported a second time, so nothing it carries
                 # is defined twice.
                 @test !haskey(second_mod.functions, "julia_shared")
+                @test LLVM.name(declared) == LLVM.name(imported)
 
+                # The entry of the second thunk gets a different name.
+                other = Enzyme.Compiler.import_cached_autodiff!(first_mod, other_ptr, FT)
+                @test !LLVM.isdeclaration(other)
+                @test !LLVM.isdeclaration(imported)
+                @test LLVM.name(other) != LLVM.name(imported)
+
+                entry = LLVM.name(imported)
                 LLVM.link!(first_mod, second_mod)
                 Enzyme.Compiler.internalize_imported_thunks!(first_mod)
-                @test first_mod.functions["thunk"].linkage ==
+                @test first_mod.functions[entry].linkage ==
                     LLVM.Linkage.Internal
             end
         finally
             delete!(Enzyme.Compiler.autodiff_cache, ptr)
+            delete!(Enzyme.Compiler.autodiff_cache, other_ptr)
         end
     end
 end

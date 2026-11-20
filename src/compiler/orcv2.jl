@@ -12,7 +12,10 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.JuliaOJIT
-    # the dylib everything is added to, which also defines Enzyme's globals
+    # The JITDylib that defines the globals of Enzyme. `lookup(name)` also uses it.
+    # Before Julia 1.14, this is the one JITDylib that Julia's JIT gives to its users. Enzyme
+    # adds each module to it. Since Julia 1.14, this is a JITDylib that only has the globals
+    # of Enzyme, and each module has its own JITDylib that resolves names in it (see `dylib`).
     jd::LLVM.JITDylib
     lctm::Union{LLVM.LazyCallThroughManager, Nothing}
     ism::Union{LLVM.IndirectStubsManager, Nothing}
@@ -85,34 +88,65 @@ function setup_globals()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    # before Julia 1.14, Julia's JIT has a single JITDylib that is shared by all its users
-    jd_main = @static if VERSION >= v"1.14.0-DEV.2171"
-        JITDylib(lljit, "enzyme")
+    es = lljit.execution_session
+
+    # `jd_globals` is the JITDylib that defines the globals of Enzyme for each module.
+    @static if VERSION >= v"1.14.0-DEV.2171"
+        # Each JITDylib that Julia's JIT creates resolves the names of Julia and the symbols
+        # of the process (JuliaLang/julia#60988), but not the names in a JITDylib of a
+        # different user. `dylib` adds this JITDylib to the link order of each JITDylib that
+        # Enzyme creates.
+        jd_globals = JITDylib(lljit, "enzyme.globals")
+        # Julia compiles the thunks of the `InlineABI` in its own JITDylib, and these thunks
+        # refer to the globals of Enzyme. Julia's JITDylib resolves a name in the JITDylibs
+        # of its link order in sequence, so it uses `jd_globals` only for a name that Julia
+        # does not define.
+        LLVM.add_to_link_order!(something(LLVM.lookup_dylib(es, "JuliaOJIT")), jd_globals)
     else
-        lljit.external_dylib
+        # Julia's JIT has one JITDylib for all its users.
+        jd_globals = lljit.external_dylib
+        LLVM.add!(jd_globals, DynamicLibrarySearchGenerator(lljit))
     end
 
-    LLVM.add!(jd_main, DynamicLibrarySearchGenerator(lljit))
-
-    es = lljit.execution_session
     try
         lctm = LLVM.LocalLazyCallThroughManager(lljit.triple, es)
         ism = LLVM.LocalIndirectStubsManager(lljit.triple)
-        jit[] = CompilerInstance(lljit, jd_main, lctm, ism)
+        jit[] = CompilerInstance(lljit, jd_globals, lctm, ism)
     catch err
         @warn "OrcV2 initialization failed with" err
-        jit[] = CompilerInstance(lljit, jd_main, nothing, nothing)
+        jit[] = CompilerInstance(lljit, jd_globals, nothing, nothing)
     end
 
-    return jd_main, lljit
+    return jd_globals, lljit
+end
+
+# Return the JITDylib to add one module to.
+#
+# Since Julia 1.14 (JuliaLang/julia#60988), each call creates a new JITDylib. The new JITDylib
+# resolves the names that Julia and the process define, and the globals of Enzyme, because
+# the JITDylib of `setup_globals` is in its link order. No other JITDylib
+# resolves the names that the module defines. Thus two modules can define the same name. Each
+# module must define all other names that it refers to. Julia's codegen gives names that are
+# unique only in one module (JuliaLang/julia#60031).
+#
+# Before Julia 1.14, Julia's JIT has one JITDylib for all its users. There, Julia's codegen
+# gives names that are unique in the session.
+function dylib()
+    @static if VERSION >= v"1.14.0-DEV.2171"
+        jd = JITDylib(jit[].jit, "enzyme")
+        LLVM.add_to_link_order!(jd, jit[].jd)
+        return jd
+    else
+        return jit[].jd
+    end
 end
 
 function __init__()
-    jd_main, lljit = setup_globals()
+    jd_globals, lljit = setup_globals()
 
     if Sys.iswindows() && Int === Int64
         # TODO can we check isGNU?
-        define_absolute_symbol(jd_main, lljit, "___chkstk_ms")
+        define_absolute_symbol(jd_globals, lljit, "___chkstk_ms")
     end
 
     # The well-known Julia values, defined in one go.
@@ -126,7 +160,7 @@ function __init__()
         ptr = Compiler.unsafe_to_ptr(Compiler.unbind(v))
         push!(pairs, mangle(lljit, "ejl_" * k) => ptr)
     end
-    define!(jd_main, absolute_symbols(pairs))
+    define!(jd_globals, absolute_symbols(pairs))
 
     return atexit() do
         dispose(tm[])
@@ -194,8 +228,7 @@ function get_trampoline(job)
     mode = job.config.params.mode
     use_primal = mode == API.DEM_ReverseModePrimal
 
-    # We could also use one dylib per job
-    jd = compiler.jd
+    jd = dylib()
 
     sym = String(gensym(:func))
     _sym = String(gensym(:func))
@@ -247,7 +280,7 @@ end
 function add!(mod)
     prepare!(mod)
     lljit = jit[].jit
-    jd = jit[].jd
+    jd = dylib()
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
     return jd
