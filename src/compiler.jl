@@ -7468,6 +7468,23 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
+    # The job that requested this derivative links this module into its own module, and finds
+    # the entry there by name. It does the same for each derivative that it requested. Since
+    # julia#60031, the counters in Julia's names are local to the module, so two derivatives of
+    # one function have the same names (for example the two halves of a split derivative, which
+    # are two jobs that each define the two functions). Make the function that is not the entry
+    # local to the module. Add the namespace of the job to the name of the entry: the mangled
+    # signature and the options of Enzyme (see the `relocation_namespace` methods above).
+    # GPUCompiler 1.x only supports Julia versions where Julia's names are unique in the session.
+    @static if HAS_GPUCOMPILER_2
+        if !job.config.toplevel
+            other = use_primal ? adjointf : augmented_primalf
+            if other !== nothing
+                other.linkage = LLVM.Linkage.LinkerPrivate
+            end
+            LLVM.name!(entry, LLVM.name(entry) * "_" * GPUCompiler.relocation_namespace(job))
+        end
+    end
     # A derivative compiled on behalf of another job is linked into it here. A toplevel one is
     # linked by `_thunk`, once it has kept the symbolic bitcode. A host derivative's inserted
     # values are handed on with the module (`compile_unhooked`).
