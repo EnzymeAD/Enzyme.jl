@@ -1,6 +1,6 @@
 function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
-        Ty::Const{Type{BigFloat}},
+        Ty::Const{<:Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
         kwargs...,
     )
@@ -33,7 +33,7 @@ end
 
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfig,
-        Ty::Const{Type{BigFloat}},
+        Ty::Const{<:Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
         kwargs...,
     )
@@ -59,7 +59,7 @@ end
 
 function EnzymeRules.reverse(
         config::EnzymeRules.RevConfig,
-        Ty::Const{Type{BigFloat}},
+        Ty::Const{<:Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
         tape;
         kwargs...,
@@ -84,7 +84,7 @@ end
 
 function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
-        Ty::Const{Type{BigFloat}},
+        Ty::Const{<:Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
         x::Const{Ti},
         rs::Const{Base.MPFR.MPFRRoundingMode}...;
@@ -114,7 +114,7 @@ end
 
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfig,
-        Ty::Const{Type{BigFloat}},
+        Ty::Const{<:Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
         x::Const{Ti},
         rs::Const{Base.MPFR.MPFRRoundingMode}...;
@@ -138,7 +138,7 @@ end
 
 function EnzymeRules.reverse(
         config::EnzymeRules.RevConfig,
-        Ty::Const{Type{BigFloat}},
+        Ty::Const{<:Type{BigFloat}},
         RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
         tape,
         x::Const{<:Integer},
