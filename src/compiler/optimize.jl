@@ -31,7 +31,7 @@ Addr13NoAliasPass() = ModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = ModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
 """
-    inline_alwaysinline!(mod)
+    run_alwaysinliner!(mod)
 
 Inline the `alwaysinline` functions of `mod`, after SimplifyCFG on every function.
 
@@ -40,7 +40,7 @@ The `AlwaysInlinerPass` of LLVM 18 computes the `BlockFrequencyInfo` of each cal
 kernel body can have several 100k blocks, which mostly SimplifyCFG removes; without it
 the inliner takes minutes per such function.
 """
-function inline_alwaysinline!(mod::LLVM.Module)
+function run_alwaysinliner!(mod::LLVM.Module)
     @dispose pb = PassBuilder() begin
         register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, ModulePassManager()) do mpm
