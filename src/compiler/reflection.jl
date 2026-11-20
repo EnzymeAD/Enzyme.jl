@@ -87,9 +87,21 @@ function reflect(
     return llvmf, mod
 end
 
-struct jl_llvmf_dump
-    TSM::LLVM.API.LLVMOrcThreadSafeModuleRef
-    F::LLVM.API.LLVMValueRef
+# This struct must have the layout of `jl_llvmf_dump_t` in Julia's `julia_internal.h`.
+# JuliaLang/julia#60698 added the field `pass_output`, which `jl_dump_function_ir` reads.
+# `C_NULL` tells Julia that there is no pass output to print.
+@static if VERSION >= v"1.14.0-DEV.1823"
+    struct jl_llvmf_dump
+        TSM::LLVM.API.LLVMOrcThreadSafeModuleRef
+        F::LLVM.API.LLVMValueRef
+        pass_output::Ptr{UInt8}
+    end
+    jl_llvmf_dump(TSM, F) = jl_llvmf_dump(TSM, F, C_NULL)
+else
+    struct jl_llvmf_dump
+        TSM::LLVM.API.LLVMOrcThreadSafeModuleRef
+        F::LLVM.API.LLVMValueRef
+    end
 end
 
 function enzyme_code_llvm(
