@@ -37,7 +37,7 @@ function f_absint_memcpy!(dest, src)
             dest[i] = src[i]
         end
     end
-    nothing
+    return nothing
 end
 
 @testset "Absint Ptr/GEP memcpy translation" begin
@@ -70,16 +70,16 @@ end
 @testset "Absint Ptr/GEP of select" begin
     T = Float64
     params_dic = Ref(1.5)
-    
+
     inters = [
         PeriodicTorsion{2, Float64}(
             (2.7, 3.1),
             true
-        )
+        ),
     ]
     types = ["type1"]
     grads_enzyme = make_zero(params_dic)
-    
+
     autodiff(
         set_runtime_activity(Reverse), loss, Active,
         Duplicated(params_dic, grads_enzyme), Const(inters),
@@ -326,7 +326,7 @@ end
     dx = zero(x)
     autodiff(Reverse, absint_closure_recapture, Active, Duplicated(x, dx), Const(0.5))
     @test dx ≈ [0.5]
-end                                         
+end
 
 Base.@noinline absint_undef_barrier(f, args...; kwargs...) = f(args...; kwargs...)
 
@@ -391,7 +391,7 @@ function slot_module(name::String)
     gv = LLVM.GlobalVariable(mod, T_pjlvalue, name)
     fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
     value = LLVM.IRBuilder() do builder
-        LLVM.position!(builder, LLVM.BasicBlock(fn, "entry"))
+        LLVM.position!(builder, LLVM.at_end(LLVM.BasicBlock(fn, "entry")))
         loaded = LLVM.load!(builder, T_pjlvalue, gv)
         tracked = LLVM.addrspacecast!(builder, loaded, T_prjlvalue)
         LLVM.ret!(builder, tracked)
@@ -440,15 +440,15 @@ end
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue, [LLVM.Int1Type()]))
         phi = LLVM.IRBuilder() do B
             entry, loop, exit = (LLVM.BasicBlock(fn, n) for n in ("entry", "loop", "exit"))
-            LLVM.position!(B, entry)
+            LLVM.position!(B, LLVM.at_end(entry))
             tracked = LLVM.addrspacecast!(B, LLVM.load!(B, T_pjlvalue, gv), T_prjlvalue)
             LLVM.br!(B, loop)
-            LLVM.position!(B, loop)
+            LLVM.position!(B, LLVM.at_end(loop))
             phi = LLVM.phi!(B, T_prjlvalue)
             back = LLVM.addrspacecast!(B, LLVM.addrspacecast!(B, phi, T_pdjlvalue), T_prjlvalue)
-            append!(LLVM.incoming(phi), [(tracked, entry), (back, loop)])
-            LLVM.br!(B, LLVM.parameters(fn)[1], loop, exit)
-            LLVM.position!(B, exit)
+            append!(phi.incoming, [(tracked, entry), (back, loop)])
+            LLVM.br!(B, fn.parameters[1], loop, exit)
+            LLVM.position!(B, LLVM.at_end(exit))
             LLVM.ret!(B, phi)
             phi
         end
@@ -468,7 +468,7 @@ end
         addr = UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), SlotConst{Float64}))
         T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
         word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
-        LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
+        gv.initializer = LLVM.const_inttoptr(word, T_pjlvalue)
 
         for enzyme_ctx in (nothing, Enzyme.Compiler.EnzymeContext(Base.get_world_counter()))
             @test Enzyme.Compiler.absint(value, enzyme_ctx) == (true, SlotConst{Float64})
@@ -484,14 +484,14 @@ end
 function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any}, enzyme_ctx::Enzyme.Compiler.EnzymeContext)
     nslots = 0
     nresolved = 0
-    for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
+    for f in mod.functions, bb in f.blocks, inst in bb.instructions
         inst isa LLVM.LoadInst || continue
-        gv = LLVM.operands(inst)[1]
+        gv = inst.operands[1]
         gv isa LLVM.GlobalVariable || continue
-        haskey(julia_values, LLVM.name(gv)) || continue
+        haskey(julia_values, gv.name) || continue
         nslots += 1
         legal, val = Enzyme.Compiler.absint(inst, enzyme_ctx, false, true)
-        if legal && val === julia_values[LLVM.name(gv)]
+        if legal && val === julia_values[gv.name]
             nresolved += 1
         end
     end
@@ -519,9 +519,9 @@ end
         # The slots GPUCompiler reported a value for: copied from `gv_to_value` on 1.x, read
         # straight from the relocation records on 2.x.
         julia_values = Dict{String, Any}()
-        for gv in LLVM.globals(mod)
-            found = Enzyme.Compiler.slot_value(enzyme_ctx, LLVM.name(gv))
-            found === nothing || (julia_values[LLVM.name(gv)] = something(found))
+        for gv in mod.globals
+            found = Enzyme.Compiler.slot_value(enzyme_ctx, gv.name)
+            found === nothing || (julia_values[gv.name] = something(found))
         end
         @static if VERSION < v"1.11-"
             # Julia 1.10's codegen writes the address of an object into the IR, not a slot, so
@@ -556,11 +556,11 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
 @testset "constant-load folding takes the slot's object from the table" begin
     LLVM.Context() do ctx
         mod, gv, value = slot_module("slot")
-        LLVM.metadata(gv)["julia.constgv"] = LLVM.MDNode(LLVM.Metadata[])
+        gv.metadata["julia.constgv"] = LLVM.MDNode(LLVM.Metadata[])
         addr = UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), SLOT_BAKED[]))
         T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
         word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
-        LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
+        gv.initializer = LLVM.const_inttoptr(word, T_pjlvalue)
 
         # A compilation with no record of the slot decodes the initializer.
         empty_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
@@ -583,7 +583,7 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
         egal_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
         Enzyme.Compiler.record_julia_value!(egal_ctx, "slot", egal[], recorded_ptr)
         folded = Enzyme.Compiler.try_replace_constant_load!(value, egal_ctx; do_replace = false)
-        obj = egal_ctx.inserted_values[LLVM.name(folded)[(ncodeunits("ejl_") + 1):end]]
+        obj = egal_ctx.inserted_values[folded.name[(ncodeunits("ejl_") + 1):end]]
         @test ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj) == recorded_ptr
 
         # A value recorded without an address belongs to a slot the back-end keeps symbolic:
@@ -595,10 +595,10 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
         # Without an initializer, as Enzyme keeps slots until the module is linked, the
         # record is all there is: the load still folds, into a global named after the object.
         Enzyme.Compiler.record_julia_value!(enzyme_ctx, "slot", SLOT_RECORDED[], recorded_ptr)
-        LLVM.initializer!(gv, nothing)
+        gv.initializer = nothing
         folded = Enzyme.Compiler.try_replace_constant_load!(value, enzyme_ctx; do_replace = false)
         @test Enzyme.Compiler.absint(folded, enzyme_ctx) == (true, SLOT_RECORDED[])
-        @test !occursin(string(UInt(recorded_ptr)), LLVM.name(folded))
+        @test !occursin(string(UInt(recorded_ptr)), folded.name)
 
         # Nor without an address.
         empty!(enzyme_ctx.julia_slot_addrs)
@@ -656,12 +656,12 @@ end
         gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
         LLVM.IRBuilder() do B
-            LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
+            LLVM.position!(B, LLVM.at_end(LLVM.BasicBlock(fn, "entry")))
             LLVM.ret!(B, gv)
         end
         table = Enzyme.Compiler.julia_value_table(enzyme_ctx, mod)
         Enzyme.Compiler.bake_inserted_values!(mod, table.inserted)
-        @test !haskey(LLVM.globals(mod), "ejl_" * key)
+        @test !haskey(mod.globals, "ejl_" * key)
         @test occursin("inttoptr", string(mod))
         @test LLVM.verify(mod) === nothing
         LLVM.dispose(mod)
@@ -690,16 +690,16 @@ end
             Enzyme.Compiler.record_julia_values!(enzyme_ctx, job, meta)
             julia_values = enzyme_ctx.julia_values
             baked = Dict(
-                LLVM.name(gv) => string(LLVM.initializer(gv)) for gv in LLVM.globals(mod)
-                    if haskey(julia_values, LLVM.name(gv))
+                gv.name => string(gv.initializer) for gv in mod.globals
+                    if haskey(julia_values, gv.name)
             )
             @test !isempty(baked)
 
             Enzyme.Compiler.make_slots_symbolic!(mod, enzyme_ctx)
             for name in keys(baked)
-                gv = LLVM.globals(mod)[name]
+                gv = mod.globals[name]
                 @test LLVM.isdeclaration(gv)
-                @test LLVM.isconstant(gv)
+                @test gv.constant
             end
             # The addresses of the values are gone from the module.
             str = string(mod)
@@ -724,9 +724,9 @@ end
 
             Enzyme.Compiler.resolve_slots!(mod, value_table)
             for (name, init) in baked
-                gv = LLVM.globals(mod)[name]
+                gv = mod.globals[name]
                 @test !LLVM.isdeclaration(gv)
-                @test string(LLVM.initializer(gv)) == init
+                @test string(gv.initializer) == init
             end
             @test LLVM.verify(mod) === nothing
         end
@@ -740,7 +740,7 @@ end
             # `slot_stores_constant` is not inferred to return a `Float64`: an `Active` return is not
             # supported, so the return is `Const`.
             _, mod = Enzyme.Compiler.reflect(slot_stores_constant, Const, Tuple{Active{Float64}}; second_stage = false)
-            slots = [gv for gv in LLVM.globals(mod) if haskey(LLVM.metadata(gv), "julia.constgv")]
+            slots = [gv for gv in mod.globals if haskey(gv.metadata, "julia.constgv")]
             @test !isempty(slots)
             @test all(!LLVM.isdeclaration, slots)
         end
@@ -760,11 +760,11 @@ end
         gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
         LLVM.IRBuilder() do B
-            LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
+            LLVM.position!(B, LLVM.at_end(LLVM.BasicBlock(fn, "entry")))
             LLVM.ret!(B, gv)
         end
         Enzyme.Compiler.bake_julia_value_globals!(mod, enzyme_ctx.inserted_values)
-        @test !haskey(LLVM.globals(mod), "ejl_" * key)
+        @test !haskey(mod.globals, "ejl_" * key)
         @test occursin("inttoptr", string(mod))
         @test LLVM.verify(mod) === nothing
         LLVM.dispose(mod)
@@ -796,4 +796,59 @@ end
 
 @testset "Dynamic index of nested Vector across aggregate PHI" begin
     @test Enzyme.gradient(set_runtime_activity(Reverse), nested_vec_phi_loss, [1.0, 2.0])[1] ≈ [9.0, 12.0]
+end
+
+# Broadcasting over arrays of structs with an inline field that has padding: the element's
+# non-pointer bytes are copied untyped (as `[N x i64]` / through SROA stack slots), and the
+# element offset `(i - 1) * sizeof(T)` is folded to `add (mul %i, sizeof(T)), -sizeof(T)`.
+struct InlinePaddedSp
+    d::Int
+    dual::Bool
+end
+struct InlineDataSp
+    d::Int
+    e::Int
+end
+struct VecWithInline{S}
+    data::Vector{Float64}
+    sp::S
+end
+inline_same(t::VecWithInline) = VecWithInline(copy(t.data), t.sp)
+inline_reorder(t::VecWithInline) = VecWithInline(copy(t.data), (t.sp[end], Base.front(t.sp)...))
+inline_val(t::VecWithInline) = sum(abs2, t.data)
+inline_pairval(p) = inline_val(p[1]) + inline_val(p[2])
+inline_same_pair(p) = inline_same.(p)
+
+@testset "Broadcast over structs with an inline padded field" begin
+    sps = (
+        InlinePaddedSp(2, true),
+        InlineDataSp(2, 3),
+        (InlinePaddedSp(1, true), InlinePaddedSp(2, false), InlinePaddedSp(3, true)),
+        (InlineDataSp(1, 2), InlineDataSp(3, 4)),
+    )
+    @testset "$(typeof(sp)) $dims" for sp in sps, dims in ((4,), (2, 3))
+        fs = Any[
+            x -> sum(inline_val, inline_same.(x)),
+            x -> sum(inline_val, map(inline_same, x)),
+            x -> sum(inline_val, [inline_same(t) for t in x]),
+        ]
+        if sp isa Tuple
+            push!(fs, x -> sum(inline_val, inline_reorder.(x)))
+        end
+        for f in fs
+            x = [VecWithInline(randn(3), sp) for _ in CartesianIndices(dims)]
+            dx = Enzyme.make_zero(x)
+            autodiff(Reverse, Const(f), Active, Duplicated(x, dx))
+            @test all(dt.data ≈ 2 .* t.data for (t, dt) in zip(x, dx))
+        end
+    end
+    @testset "Matrix of tuples" for f in (
+            x -> sum(inline_pairval, map(inline_same_pair, x)),
+            x -> sum(inline_pairval, inline_same_pair.(x)),
+        )
+        x = [(VecWithInline(randn(3), InlinePaddedSp(1, true)), VecWithInline(randn(3), InlinePaddedSp(2, false))) for _ in 1:2, _ in 1:2]
+        dx = Enzyme.make_zero(x)
+        autodiff(Reverse, Const(f), Active, Duplicated(x, dx))
+        @test all(all(dt.data ≈ 2 .* t.data for (t, dt) in zip(p, dp)) for (p, dp) in zip(x, dx))
+    end
 end

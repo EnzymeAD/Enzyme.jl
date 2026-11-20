@@ -37,18 +37,18 @@ end
 # end
 
 function only!(tt::TypeTree, offset::Integer)
-    API.EnzymeTypeTreeOnlyEq(tt, offset)
+    return API.EnzymeTypeTreeOnlyEq(tt, offset)
 end
 
 function data0!(tt::TypeTree)
-    API.EnzymeTypeTreeData0Eq(tt)
+    return API.EnzymeTypeTreeData0Eq(tt)
 end
 
 function canonicalize!(tt::TypeTree, size, dl)
-    API.EnzymeTypeTreeCanonicalizeInPlace(tt, size, dl)
+    return API.EnzymeTypeTreeCanonicalizeInPlace(tt, size, dl)
 end
 function shift!(tt::TypeTree, dl, offset, maxSize, addOffset)
-    API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
+    return API.EnzymeTypeTreeShiftIndiciesEq(tt, dl, offset, maxSize, addOffset)
 end
 
 function merge!(dst::TypeTree, src::TypeTree; consume = true)
@@ -62,10 +62,10 @@ end
 @inline function typetree_primitive(t)
     return nothing
 end
-@inline function typetree_primitive(::Type{T}) where {T<:Integer}
+@inline function typetree_primitive(::Type{T}) where {T <: Integer}
     return API.DT_Integer
 end
-@inline function typetree_primitive(::Type{T}) where {T<:Enum}
+@inline function typetree_primitive(::Type{T}) where {T <: Enum}
     return API.DT_Integer
 end
 @inline function typetree_primitive(::Type{Char})
@@ -128,8 +128,8 @@ function get_offsets(@nospecialize(T::Type))
         return ()
     end
 
-    results = Tuple{API.CConcreteType,Int}[]
-    for f = 1:fieldcount(T)
+    results = Tuple{API.CConcreteType, Int}[]
+    for f in 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = typed_fieldtype(T, f)
 
@@ -145,6 +145,26 @@ function get_offsets(@nospecialize(T::Type))
     return results
 end
 
+function push_offset_md!(mds::Vector{LLVM.Metadata}, sT::API.CConcreteType, rel_off::Int)
+    if sT == API.DT_Pointer
+        push!(mds, LLVM.MDString("Pointer"))
+    elseif sT == API.DT_Integer
+        push!(mds, LLVM.MDString("Integer"))
+    elseif sT == API.DT_Half
+        push!(mds, LLVM.MDString("Float@half"))
+    elseif sT == API.DT_Float
+        push!(mds, LLVM.MDString("Float@float"))
+    elseif sT == API.DT_BFloat16
+        push!(mds, LLVM.MDString("Float@bf16"))
+    elseif sT == API.DT_Double
+        push!(mds, LLVM.MDString("Float@double"))
+    else
+        @assert false
+    end
+    push!(mds, LLVM.Metadata(LLVM.ConstantInt(rel_off)))
+    return nothing
+end
+
 """
     to_fullmd(world, T, offset, lim)
 
@@ -154,7 +174,28 @@ Packages can add methods to `get_offsets`. Thus `to_fullmd` calls `get_offsets` 
 See [`typetree_in_world`](@ref).
 """
 function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
-    mds = LLVM.Metadata[]
+    return fullmd_entries_to_md(fullmd_entries(world, T, offset, lim))
+end
+
+"""
+    to_fullmd(world, ET, offset, lim, sz_et)
+
+Construct the full type metadata for `lim` bytes starting at byte `offset` (`0 <= offset < sz_et`)
+within a contiguous sequence of inline elements of type `ET` with byte stride `sz_et`.
+"""
+function to_fullmd(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, sz_et::Int)
+    return fullmd_entries_to_md(fullmd_entries(world, ET, offset, lim, sz_et))
+end
+
+"""
+    fullmd_entries(world, T, offset, lim)
+    fullmd_entries(world, ET, offset, lim, sz_et)
+
+The `(type, offset)` entries of the corresponding [`to_fullmd`](@ref) method, with
+offsets relative to `offset`.
+"""
+function fullmd_entries(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
+    entries = Tuple{API.CConcreteType, Int}[]
     offs = Core._call_in_world_total(world, get_offsets, T)
 
     minoff = -1
@@ -175,22 +216,57 @@ function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
         if sO >= lim + offset
             continue
         end
-        if sT == API.DT_Pointer
-            push!(mds, LLVM.MDString("Pointer"))
-        elseif sT == API.DT_Integer
-            push!(mds, LLVM.MDString("Integer"))
-        elseif sT == API.DT_Half
-            push!(mds, LLVM.MDString("Float@half"))
-        elseif sT == API.DT_Float
-            push!(mds, LLVM.MDString("Float@float"))
-        elseif sT == API.DT_BFloat16
-            push!(mds, LLVM.MDString("Float@bf16"))
-        elseif sT == API.DT_Double
-            push!(mds, LLVM.MDString("Float@double"))
+        push!(entries, (sT, max(0, sO - offset)))
+    end
+    return entries
+end
+
+function fullmd_entries(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, sz_et::Int)
+    entries = Tuple{API.CConcreteType, Int}[]
+    offs = Core._call_in_world_total(world, get_offsets, ET)
+    isempty(offs) && return entries
+
+    end_off = offset + lim
+    nel = cld(end_off, sz_et)
+
+    minoff = -1
+    for (_, sO) in offs
+        if sO >= offset
+            if sO == offset
+                minoff = sO
+            end
         else
-            @assert false
+            minoff = max(minoff, sO)
         end
-        push!(mds, LLVM.Metadata(LLVM.ConstantInt(max(0, sO - offset))))
+    end
+
+    for (sT, sO) in offs
+        if sO != minoff && sO < offset
+            continue
+        end
+        if sO >= end_off
+            continue
+        end
+        push!(entries, (sT, max(0, sO - offset)))
+    end
+
+    for elem_idx in 1:(nel - 1)
+        base_off = elem_idx * sz_et
+        for (sT, sO) in offs
+            pos = base_off + sO
+            if pos >= end_off
+                continue
+            end
+            push!(entries, (sT, pos - offset))
+        end
+    end
+    return entries
+end
+
+function fullmd_entries_to_md(entries::Vector{Tuple{API.CConcreteType, Int}})
+    mds = LLVM.Metadata[]
+    for (sT, off) in entries
+        push_offset_md!(mds, sT, off)
     end
     return LLVM.MDNode(mds)
 end
@@ -209,7 +285,7 @@ function to_md(tt::TypeTree, ctx)
     )
 end
 
-const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
+const TypeTreeTable = IdDict{Any, Union{Nothing, TypeTree}}
 
 """
     function typetree(T, ctx, dl, seen=TypeTreeTable())
@@ -278,21 +354,21 @@ end
 
 function typetree_inner(::Type{Core.SimpleVector}, ctx, dl, seen::TypeTreeTable)
     tt = TypeTree()
-    for i = 0:(sizeof(Csize_t)-1)
+    for i in 0:(sizeof(Csize_t) - 1)
         merge!(tt, TypeTree(API.DT_Integer, i, ctx))
     end
     return tt
 end
 
 function typetree_inner(
-    ::Type{<:Union{Ptr{T},Core.LLVMPtr{T}}},
-    ctx,
-    dl,
-    seen::TypeTreeTable,
-) where {T}
+        ::Type{<:Union{Ptr{T}, Core.LLVMPtr{T}}},
+        ctx,
+        dl,
+        seen::TypeTreeTable,
+    ) where {T}
     tt = copy(typetree(T == UInt8 ? Nothing : T, ctx, dl, seen))
     @static if Base.USE_GPL_LIBS
-        cholmod_exception = T != SparseArrays.cholmod_dense_struct && T != SparseArrays.cholmod_sparse_struct && T != SparseArrays.cholmod_factor_struct
+        cholmod_exception = T != SparseArrays.LibSuiteSparse.cholmod_dense_struct && T != SparseArrays.LibSuiteSparse.cholmod_sparse_struct && T != SparseArrays.LibSuiteSparse.cholmod_factor_struct
     else
         cholmod_exception = true
     end
@@ -324,28 +400,28 @@ end
             sizeofstruct += sizeof(Csize_t)
         end
 
-        for i = offset:(sizeofstruct-1)
+        for i in offset:(sizeofstruct - 1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
         return tt
     end
 else
     function typetree_inner(
-        ::Type{<:GenericMemory{kind,T}},
-        ctx,
-        dl,
-        seen::TypeTreeTable,
-    ) where {kind,T}
+            ::Type{<:GenericMemory{kind, T}},
+            ctx,
+            dl,
+            seen::TypeTreeTable,
+        ) where {kind, T}
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
 
         if !allocatedinline(T) && T != Union{}
             st0 = TypeTree(API.DT_Pointer, -1, ctx)
             only!(st0, -1)
             merge!(tt, st0)
-        end 
+        end
 
         shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
-        for i = 0:(sizeof(Csize_t)-1)
+        for i in 0:(sizeof(Csize_t) - 1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
 
@@ -353,18 +429,18 @@ else
     end
 
     function typetree_inner(
-        AT::Type{<:GenericMemoryRef{kind,T}},
-        ctx,
-        dl,
-        seen::TypeTreeTable,
-    ) where {kind,T}
+            AT::Type{<:GenericMemoryRef{kind, T}},
+            ctx,
+            dl,
+            seen::TypeTreeTable,
+        ) where {kind, T}
         tt = copy(typetree(typed_fieldtype(AT, 1), ctx, dl, seen))
         shift!(tt, dl, 0, sizeof(Int), 0)
 
-        for f = 2:fieldcount(AT)
+        for f in 2:fieldcount(AT)
             offset = fieldoffset(AT, f)
             subT = typed_fieldtype(AT, f)
-            
+
             subtree = copy(typetree(subT, ctx, dl, seen))
 
             # Allocated inline so adjust first path
@@ -429,7 +505,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
 
     desc = Base.DataTypeFieldDesc(T)
 
-    for f = 1:fieldcount(T)
+    for f in 1:fieldcount(T)
         offset = Int(fieldoffset(T, f))
         subT = typed_fieldtype(T, f)
 
@@ -437,12 +513,12 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         nextbytes = if f == fieldcount(T)
             Int(sizeof(T))
         else
-            Int(fieldoffset(T, f+1))
+            Int(fieldoffset(T, f + 1))
         end
 
         # Fill in padding gaps with Anything, unless subT was an integer or Enum
         padding_T = (subT <: Integer || subT <: Enum) ? API.DT_Integer : API.DT_Anything
-        for i = endbytes:(nextbytes-1)
+        for i in endbytes:(nextbytes - 1)
             merge!(tt, TypeTree(padding_T, i, ctx))
         end
 
@@ -467,7 +543,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
             # FIXME: Handle union
             continue
         end
-        
+
         subtree = copy(typetree(subT, ctx, dl, seen))
 
         # Allocated inline so adjust first path

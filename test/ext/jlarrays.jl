@@ -295,9 +295,11 @@ end
 
 #=
 The AbstractGPUArray reduction rules. `sum`/`mapreduce` over a GPU array goes
-through `GPUArrays._mapreduce`, which allocates the output and fills it with
-`GPUArrays.mapreducedim!`; both have rules in EnzymeGPUArraysExt. Without them
-Enzyme descends into the backend reduction kernel, which aborts on a JLArray.
+through `GPUArrays._mapreduce`, which allocates the output and, before GPUArrays
+12, fills it with `GPUArrays.mapreducedim!`; both have rules in
+EnzymeGPUArraysExt. GPUArrays 12 reduces with AcceleratedKernels and has no
+`mapreducedim!`, so there only the `_mapreduce` rules apply. Without them Enzyme
+descends into the backend reduction kernel, which aborts on a JLArray.
 =#
 @testset "GPUArrays reduction rules" begin
     jl(x) = JLArray(x)
@@ -350,6 +352,78 @@ Enzyme descends into the backend reduction kernel, which aborts on a JLArray.
         dc = jl(zeros(ComplexF64, 2))
         Enzyme.autodiff(Reverse, realsum, Active, Duplicated(jl(c0), dc))
         @test collect(dc) ≈ fill(complex(1.0), 2)
+    end
+
+    # `sum(x; init)` with no `dims` is a scalar again; on GPUArrays 12 a missing
+    # `init` is `_NoInit()` rather than `nothing`.
+    @testset "reverse, init" begin
+        suminit(x) = sum(x; init = 5.0)
+        dx = jl(zeros(4))
+        Enzyme.autodiff(Reverse, suminit, Active, Duplicated(jl(x0), dx))
+        @test collect(dx) ≈ ones(4)
+    end
+
+    #=
+    With `dims` the result is an array, so its cotangent arrives through the
+    shadow the rule returns instead of as an `Active` (#3808). Each entry of `x`
+    feeds one entry of the result, so the cotangent broadcasts back along the
+    reduced dims. The losses stay off broadcasts, which a JLArray can't
+    differentiate (see the `fill!` rule below).
+    =#
+    @testset "dims" begin
+        X0 = [1.0 2.0 3.0; 4.0 5.0 6.0]
+        w = jl([1.0, 2.0, 3.0])
+        sum1(x) = 2.0 * sum(sum(x; dims = 1))
+        sum2(x) = 2.0 * sum(sum(x; dims = 2))
+        sum12(x) = 2.0 * sum(sum(x; dims = (1, 2)))
+        # weights the reduced entries differently, so a cotangent that ends up
+        # in the wrong place shows
+        wsum1(w, x) = dot(w, vec(sum(x; dims = 1)))
+
+        @testset "reverse $(nameof(g))" for g in (sum1, sum2, sum12)
+            dx = jl(zeros(2, 3))
+            Enzyme.autodiff(Reverse, g, Active, Duplicated(jl(X0), dx))
+            @test collect(dx) ≈ fill(2.0, 2, 3)
+        end
+
+        @testset "reverse, weighted" begin
+            dx = jl(zeros(2, 3))
+            Enzyme.autodiff(Reverse, wsum1, Active, Const(w), Duplicated(jl(X0), dx))
+            @test collect(dx) ≈ [1.0 2.0 3.0; 1.0 2.0 3.0]
+        end
+
+        @testset "reverse, batched" begin
+            d1, d2 = jl(zeros(2, 3)), jl(zeros(2, 3))
+            Enzyme.autodiff(Reverse, sum1, Active, BatchDuplicated(jl(X0), (d1, d2)))
+            @test collect(d1) ≈ fill(2.0, 2, 3)
+            @test collect(d2) ≈ fill(2.0, 2, 3)
+        end
+
+        # `init` is a constant offset, so it must not change the cotangent.
+        @testset "reverse, init" begin
+            suminit1(x) = 2.0 * sum(sum(x; dims = 1, init = 5.0))
+            dx = jl(zeros(2, 3))
+            Enzyme.autodiff(Reverse, suminit1, Active, Duplicated(jl(X0), dx))
+            @test collect(dx) ≈ fill(2.0, 2, 3)
+        end
+
+        # An unused reduction has a `Const` result and must not contribute.
+        @testset "reverse, unused result" begin
+            unused(x) = (sum(x; dims = 1); sum(x))
+            dx = jl(zeros(2, 3))
+            Enzyme.autodiff(Reverse, unused, Active, Duplicated(jl(X0), dx))
+            @test collect(dx) ≈ ones(2, 3)
+        end
+
+        @testset "forward" begin
+            colsums(x) = sum(x; dims = 1)
+            dX = jl([1.0 0.0 1.0; 1.0 1.0 0.0])
+            res = only(Enzyme.autodiff(Forward, colsums, Duplicated, Duplicated(jl(X0), dX)))
+            @test collect(res) ≈ [2.0 1.0 1.0]
+
+            res = only(Enzyme.autodiff(Forward, sum1, Duplicated, Duplicated(jl(X0), dX)))
+            @test res ≈ 2.0 * 4.0
+        end
     end
 end
 

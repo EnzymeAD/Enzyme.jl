@@ -433,7 +433,11 @@ end
     LLVM.Context() do ctx
         kind = Enzyme.Compiler.arg_kind
         @test kind(Nothing) === :ghost
-        @test kind(Type{Float64}) === :ghost
+        @test kind(Enzyme.Compiler.TypeEgal{Float64}) === :ghost
+        # Since julia#62001 only `TypeEgal{T}` is a constant type.
+        @static if isdefined(Core, :TypeEgal)
+            @test kind(Type{Float64}) === :boxed
+        end
         @test kind(Const{typeof(sin)}) === :ghost
         @test kind(Float64) === :byval
         @test kind(UInt8) === :byval
@@ -450,7 +454,7 @@ end
         @test kind(Duplicated) === :boxed
 
         mod = LLVM.Module("test")
-        LLVM.triple!(mod, Sys.MACHINE)
+        mod.triple = Sys.MACHINE
         @test Enzyme.Compiler.native_invoke_available(mod)
 
         mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(all_boxed), Tuple{Any, Any, Any, Any}, world)

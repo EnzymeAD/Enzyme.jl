@@ -8,48 +8,29 @@
 function unsafe_to_pointer end
 export unsafe_to_pointer
 
-if VERSION >= v"1.12-"
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
-        return Core.Intrinsics.llvmcall((
-            """
-            declare nonnull ptr @julia.pointer_from_objref(ptr addrspace(11))
+# the IR of `unsafe_to_pointer`, for `generate_llvmcall`
+function unsafe_to_pointer_ir(builder, obj)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_derived = LLVM.PointerType(T_jlvalue, 11)
+    T_ptr = LLVM.PointerType(T_jlvalue)
+    ft = LLVM.FunctionType(T_ptr, [T_derived])
+    mod = LLVM.Interop.current_module(builder)
+    pointer_from_objref = LLVM.Function(mod, "julia.pointer_from_objref", ft)
+    push!(pointer_from_objref.return_attributes, LLVM.EnumAttribute(:nonnull))
 
-            define ptr @f(ptr addrspace(10) %obj) readnone alwaysinline {
-                %c = addrspacecast ptr addrspace(10) %obj to ptr addrspace(11)
-                %r = call ptr @julia.pointer_from_objref(ptr addrspace(11) %c)
-                ret ptr %r
-            }
-            """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
-    end
-elseif Int == Int64
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
-        return Base.llvmcall((
-            """
-            declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
+    f = LLVM.Interop.current_function(builder)
+    f.memory_effects = LLVM.MemoryEffects(:none)
 
-            define i64 @f({} addrspace(10)* %obj) readnone alwaysinline {
-                %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
-                %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
-                %e = ptrtoint {}* %r to i64
-                ret i64 %e
-            }
-            """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
-    end
-else
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
-        return Base.llvmcall((
-            """
-            declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
-
-            define i32 @f({} addrspace(10)* %obj) readnone alwaysinline {
-                %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
-                %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
-                %e = ptrtoint {}* %r to i32
-                ret i32 %e
-            }
-            """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
-    end
+    c = LLVM.addrspacecast!(builder, obj, T_derived)
+    r = LLVM.call!(builder, ft, pointer_from_objref, [c])
+    # before Julia 1.12, `Ptr` is passed as an integer
+    T_ret = f.function_type.return_type
+    return T_ret isa LLVM.IntegerType ? LLVM.ptrtoint!(builder, r, T_ret) : r
 end
+
+# `val` is passed boxed (`Tuple{Any}`), so that the pointer is taken at run time
+@eval @inline unsafe_to_pointer(@nospecialize(val::Type)) =
+    $(LLVM.Interop.generate_llvmcall(unsafe_to_pointer_ir, Ptr{Cvoid}, Tuple{Any}, :val))
 
 
 @inline is_concrete_tuple(x::Type{T2}) where {T2} =
@@ -62,23 +43,17 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
-function arg_operands_view(inst::LLVM.CallInst)
-    N_args = LLVM.API.LLVMGetNumArgOperands(inst)
-    return @view LLVM.operands(inst)[1:N_args]
-end
-
-
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
-    globs = LLVM.globals(mod)
+    globs = mod.globals
     k = "jl_nothing"
     if Base.haskey(globs, "ejl_" * k)
-        return globs["ejl_"*k]
+        return globs["ejl_" * k]
     end
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
-    API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+    gv.metadata["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
+    gv.metadata["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
     return gv
 end
 
@@ -136,8 +111,8 @@ function setup_global(
         @nospecialize(val),
         enzyme_ctx::Union{EnzymeContext, Nothing},
     )::LLVM.Value
-    mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
-    globs = LLVM.globals(mod)
+    mod = B.insert_block.parent.parent
+    globs = mod.globals
     if Base.haskey(globs, "ejl_" * k)
         return globs["ejl_" * k]
     end
@@ -157,12 +132,12 @@ function setup_global(
 
     gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
-    API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+    gv.metadata["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
     empty_memory = Enzyme.Compiler.is_memory_instance(val)
     if empty_memory
         # The empty Memory singleton: no in-bounds access writes its data, so Enzyme may treat
         # writes through a Memory that is either it or freshly allocated as local writes.
-        API.SetMD(gv, "enzymejl_empty_memory", LLVM.MDNode(LLVM.Metadata[]))
+        gv.metadata["enzymejl_empty_memory"] = LLVM.MDNode(LLVM.Metadata[])
     end
     inactive = force_inactive || empty_memory
     if !inactive && val isa Core.SimpleVector && length(val) == 0
@@ -176,7 +151,7 @@ function setup_global(
         end
     end
     if inactive
-        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+        gv.metadata["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
     end
     return gv
 end
@@ -215,7 +190,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 
     fill_val = LLVM.ConstantInt(convert(UInt, ptr))
     fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-    LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+    return LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 
@@ -247,7 +222,7 @@ using Base: _methods_by_ftype
 
 # Julia compiler integration
 
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Union{Nothing,Core.MethodTable})
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Union{Nothing, Core.MethodTable})
     return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, mt, world) !== nothing
 end
 
@@ -260,12 +235,12 @@ end
 end
 
 @inline function lookup_world(
-    @nospecialize(sig::Type),
-    world::UInt,
-    mt::Union{Nothing,Core.MethodTable},
-    min_world::Ref{UInt},
-    max_world::Ref{UInt},
-)
+        @nospecialize(sig::Type),
+        world::UInt,
+        mt::Union{Nothing, Core.MethodTable},
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
     res = ccall(
         :jl_gf_invoke_lookup_worlds,
         Any,
@@ -280,34 +255,34 @@ end
 end
 
 @inline function lookup_world(
-    @nospecialize(sig::Type),
-    world::UInt,
-    mt::Core.Compiler.InternalMethodTable,
-    min_world::Ref{UInt},
-    max_world::Ref{UInt},
-)
+        @nospecialize(sig::Type),
+        world::UInt,
+        mt::Core.Compiler.InternalMethodTable,
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
     res = lookup_world(sig, mt.world, nothing, min_world, max_world)
     return res
 end
 
 @inline function lookup_world(
-    @nospecialize(sig::Type),
-    world::UInt,
-    mt::Core.Compiler.CachedMethodTable,
-    min_world::Ref{UInt},
-    max_world::Ref{UInt},
-)
+        @nospecialize(sig::Type),
+        world::UInt,
+        mt::Core.Compiler.CachedMethodTable,
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
     res = lookup_world(sig, world, mt.table, min_world, max_world)
     return res
 end
 
 @inline function lookup_world(
-    @nospecialize(sig::Type),
-    world::UInt,
-    mt::Core.Compiler.OverlayMethodTable,
-    min_world::Ref{UInt},
-    max_world::Ref{UInt},
-)
+        @nospecialize(sig::Type),
+        world::UInt,
+        mt::Core.Compiler.OverlayMethodTable,
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
     res = lookup_world(sig, mt.world, mt.mt, min_world, max_world)
     if res !== nothing
         return res
@@ -325,7 +300,7 @@ Callers are responsible for setting `ci.edges`
 """
 function create_fresh_codeinfo(fn, source, world, slotnames, code)
     ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
-    
+
     @static if isdefined(Core, :DebugInfo)
         # TODO: Add proper debug info
         ci.debuginfo = Core.DebugInfo(:none)
@@ -340,14 +315,14 @@ function create_fresh_codeinfo(fn, source, world, slotnames, code)
     ci.max_world = typemax(UInt)
 
     ci.slotnames = Symbol[sym for sym in slotnames]
-    ci.slotflags = UInt8[0x00 for i = 1:length(slotnames)]
+    ci.slotflags = UInt8[0x00 for i in 1:length(slotnames)]
     if VERSION >= v"1.12-"
         ci.nargs = length(slotnames)
         ci.isva = false
     end
 
     ci.code = code
-    ci.ssaflags = UInt8[0x00 for i = 1:length(code)]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    ci.ssaflags = UInt8[0x00 for i in 1:length(code)]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
     @static if isdefined(Core, :DebugInfo)
     else
         for _ in 1:length(code)
@@ -377,7 +352,7 @@ function add_edge!(edges::Vector{Any}, mi::Core.MethodInstance)
     return edges
 end
 
-@inline function my_methodinstance(@nospecialize(method_table::Union{Core.Compiler.MethodTableView, Nothing}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
+@inline function my_methodinstance(@nospecialize(method_table::Union{Core.Compiler.MethodTableView, Nothing}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}} = nothing, max_world::Union{Nothing, Base.RefValue{UInt}} = nothing)::Union{Core.MethodInstance, Nothing}
 
     if min_world === nothing
         min_world = Ref{UInt}(typemin(UInt))
@@ -387,7 +362,7 @@ end
     end
 
     sig = Tuple{ft, tt.parameters...}
-    
+
     lookup_result = lookup_world(
         sig, world, method_table, min_world, max_world
     )
@@ -396,24 +371,26 @@ end
     end
 
     match = lookup_result::Core.MethodMatch
-    
-    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
-               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+
+    mi = ccall(
+        :jl_specializations_get_linfo, Ref{MethodInstance},
+        (Any, Any, Any), match.method, match.spec_types, match.sparams
+    )
     return mi::Core.MethodInstance
 end
 
-@inline function my_methodinstance(@nospecialize(interp::Core.Compiler.AbstractInterpreter), @nospecialize(ft::Type), @nospecialize(tt::Type),  min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
-    my_methodinstance(Core.Compiler.method_table(interp), ft, tt, interp.world, min_world, max_world)
+@inline function my_methodinstance(@nospecialize(interp::Core.Compiler.AbstractInterpreter), @nospecialize(ft::Type), @nospecialize(tt::Type), min_world::Union{Nothing, Base.RefValue{UInt}} = nothing, max_world::Union{Nothing, Base.RefValue{UInt}} = nothing)::Union{Core.MethodInstance, Nothing}
+    return my_methodinstance(Core.Compiler.method_table(interp), ft, tt, interp.world, min_world, max_world)
 end
 
-@inline function my_methodinstance(@nospecialize(mode::Union{Missing, EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
+@inline function my_methodinstance(@nospecialize(mode::Union{Missing, EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}} = nothing, max_world::Union{Nothing, Base.RefValue{UInt}} = nothing)::Union{Core.MethodInstance, Nothing}
     interp = if mode === missing # TODO: PrimalMode
         Core.Compiler.NativeInterpreter(world)
     else
         @assert mode == Forward || mode == Reverse
         Compiler.primal_interp_world(mode, world)
     end
-    my_methodinstance(interp, ft, tt, min_world, max_world)
+    return my_methodinstance(interp, ft, tt, min_world, max_world)
 end
 
 function prevmethodinstance end
@@ -431,9 +408,9 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
-    
+
     mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
-    
+
     code = Any[Core.Compiler.ReturnNode(mi)]
 
     ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
@@ -460,90 +437,90 @@ export my_methodinstance
 
 @static if VERSION < v"1.11-"
 
-# JL_EXTENSION typedef struct {
-#     JL_DATA_TYPE
-#     void *data;
-# #ifdef STORE_ARRAY_LEN (just true new newer versions)
-# 	size_t length;
-# #endif
-#     jl_array_flags_t flags;
-#     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
-#     uint32_t offset;  // for 1-d only. does not need to get big.
-#     size_t nrows;
-#     union {
-#         // 1d
-#         size_t maxsize;
-#         // Nd
-#         size_t ncols;
-#     };
-#     // other dim sizes go here for ndims > 2
-#
-#     // followed by alignment padding and inline data, or owner pointer
-# } jl_array_t;
-@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
-    if T <: Array
-        eT = eltype(T)
-        PT = Ptr{eT}
-        return (PT, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)[i]
-    else
-        fieldtype(T, i)
-    end
-end
-
-@inline function typed_fieldcount(@nospecialize(T::Type))::Int
-    if T <: Array
-        return 7
-    else
-        fieldcount(T)
-    end
-end
-
-@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
-    if T <: Array
-        tys = (Ptr, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)
-        sum = 0
-        idx = 1
-        while idx < i
-            sum += sizeof(tys[idx])
-            idx+=1
+    # JL_EXTENSION typedef struct {
+    #     JL_DATA_TYPE
+    #     void *data;
+    # #ifdef STORE_ARRAY_LEN (just true new newer versions)
+    # 	size_t length;
+    # #endif
+    #     jl_array_flags_t flags;
+    #     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
+    #     uint32_t offset;  // for 1-d only. does not need to get big.
+    #     size_t nrows;
+    #     union {
+    #         // 1d
+    #         size_t maxsize;
+    #         // Nd
+    #         size_t ncols;
+    #     };
+    #     // other dim sizes go here for ndims > 2
+    #
+    #     // followed by alignment padding and inline data, or owner pointer
+    # } jl_array_t;
+    @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
+        if T <: Array
+            eT = eltype(T)
+            PT = Ptr{eT}
+            return (PT, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)[i]
+        else
+            fieldtype(T, i)
         end
-        return sum 
-    else
-        fieldoffset(T, i)
     end
-end
+
+    @inline function typed_fieldcount(@nospecialize(T::Type))::Int
+        if T <: Array
+            return 7
+        else
+            fieldcount(T)
+        end
+    end
+
+    @inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
+        if T <: Array
+            tys = (Ptr, Csize_t, UInt16, UInt16, UInt32, Csize_t, Csize_t)
+            sum = 0
+            idx = 1
+            while idx < i
+                sum += sizeof(tys[idx])
+                idx += 1
+            end
+            return sum
+        else
+            fieldoffset(T, i)
+        end
+    end
 
 else
 
-function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef}))
-    ET = eltype(T)
+    function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef}))
+        ET = eltype(T)
 
-    # 0 = inlinealloc
-    # 1 = isboxed
-    # 2 = isbitsunion
-    return (Base.datatype_arrayelem(T.types[2]) == 2) || Compiler.datatype_layoutsize(T.types[2]) == 0
-end
-
-@inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
-    if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
-        if T <: GenericMemoryRef && i == 1 && T isa DataType && is_memory_ref_field2_an_offset(T)
-            Int
-        else
-            eT = eltype(T)
-            Ptr{eT}
-        end
-    else
-        fieldtype(T, i)
+        # 0 = inlinealloc
+        # 1 = isboxed
+        # 2 = isbitsunion
+        return (Base.datatype_arrayelem(T.types[2]) == 2) || Compiler.datatype_layoutsize(T.types[2]) == 0
     end
-end
 
-@inline function typed_fieldcount(@nospecialize(T::Type))::Int
-    fieldcount(T)
-end
+    @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
+        if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
+            if T <: GenericMemoryRef && i == 1 && T isa DataType && is_memory_ref_field2_an_offset(T)
+                Int
+            else
+                eT = eltype(T)
+                Ptr{eT}
+            end
+        else
+            fieldtype(T, i)
+        end
+    end
 
-@inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
-    fieldoffset(T, i)
-end
+    @inline function typed_fieldcount(@nospecialize(T::Type))::Int
+        fieldcount(T)
+    end
+
+    @inline function typed_fieldoffset(@nospecialize(T::Type), i::Int)::Int
+        fieldoffset(T, i)
+    end
 
 end
 
@@ -552,81 +529,77 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing, throw_error=true)::Union{Nothing, LLVM.LLVMType}
+function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction} = nothing, throw_error = true)::Union{Nothing, LLVM.LLVMType}
 
-    vt = LLVM.value_type(LLVM.parameters(fn)[idx])
+    vt = fn.parameters[idx].value_type
 
-    sretkind = LLVM.kind(if LLVM.version().major >= 12
-        LLVM.TypeAttribute("sret", LLVM.Int32Type())
-    else
-        LLVM.EnumAttribute("sret")
-    end)
+    sretkind = :sret
 
 
     enzymejl_parmtype_ref = nothing
     enzymejl_parmtype = nothing
 
-    for attr in collect(LLVM.parameter_attributes(fn, idx))
-        ekind = LLVM.kind(attr)
+    for attr in collect(fn.parameter_attributes[idx])
+        ekind = attr.kind
 
         if ekind == sretkind
-            res = LLVM.value(attr)
-            if !LLVM.is_opaque(vt)
-                @assert eltype(vt) == res
+            res = attr.value
+            if !LLVM.isopaque(vt)
+                @assert vt.element_type == res
             end
             return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_sret_union_bytes"
-            nbytes = parse(Int, LLVM.value(attr))
+            nbytes = parse(Int, attr.value)
             i8 = LLVM.IntType(8)
 
             res = LLVM.ArrayType(i8, nbytes)
-            if !LLVM.is_opaque(vt)
-                @assert eltype(vt) == res
+            if !LLVM.isopaque(vt)
+                @assert vt.element_type == res
             end
             return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_returnRoots"
-            nroots = parse(Int, LLVM.value(attr))
-    
+            nroots = parse(Int, attr.value)
+
             T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
             T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
             res = LLVM.ArrayType(T_prjlvalue, nroots)
-            if !LLVM.is_opaque(vt)
-                @assert eltype(vt) == res
+            if !LLVM.isopaque(vt)
+                @assert vt.element_type == res
             end
             return res::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
-            ety = parse(UInt, LLVM.value(attr))
+            ety = parse(UInt, attr.value)
             ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
             ety = LLVM.LLVMType(ety)
-            if !LLVM.is_opaque(vt)
-                @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
+            if !LLVM.isopaque(vt)
+                @assert ety == vt.element_type "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
-        
+
             return ety::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_parmtype_ref"
-            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(attr)))
+            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, attr.value))
             continue
         end
 
         if ekind == "enzymejl_parmtype"
-            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, attr.value))
             enzymejl_parmtype = Base.unsafe_pointer_to_objref(ptr)::Type
         end
     end
 
     if enzymejl_parmtype_ref == GPUCompiler.BITS_REF && enzymejl_parmtype !== nothing
         res = convert(LLVM.LLVMType, enzymejl_parmtype)
-        if !LLVM.is_opaque(vt)
-            @assert eltype(vt) == res
+        if !LLVM.isopaque(vt)
+            @assert vt.element_type == res
         end
         return res::LLVM.LLVMType
     end
@@ -645,7 +618,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
     msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
     ir = string(fn)
     bt = nothing
-    if btval !== nothing        
+    if btval !== nothing
         bt = GPUCompiler.backtrace(btval)
     end
     if mi !== nothing && world !== nothing
@@ -658,11 +631,11 @@ end
 export sret_ty
 
 function get_rooted_typ(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
-    for attr in collect(LLVM.parameter_attributes(fn, idx))
-        ekind = LLVM.kind(attr)
+    for attr in collect(fn.parameter_attributes[idx])
+        ekind = attr.kind
 
         if ekind == "enzymejl_rooted_typ"
-            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, attr.value))
             return Base.unsafe_pointer_to_objref(ptr)
         end
     end

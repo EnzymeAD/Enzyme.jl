@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 120
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - GPUCompiler=${{ matrix.gpucompiler || 'default' }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    # Enzyme does not support Julia 1.14 yet, so its jobs show progress without blocking PRs.
+    continue-on-error: ${{ matrix.allow_failure || matrix.version == '1.14' }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +38,7 @@ jobs:
           - '1.11'
           - '1.12'
           - '1.13'
+          - '1.14'
         os:
           - ubuntu-24.04
           - macOS-latest
@@ -83,6 +86,15 @@ jobs:
             libEnzyme: packaged
             version: '1.13'
             assertions: true
+          # Enzyme does not support Julia 1.14 yet. This job shows the progress and does not
+          # block PRs. juliaup supplies the assertions build, thus CI does not compile Julia.
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.14'
+            assertions: true
+            juliaup_channel: '1.14+assert'
+            allow_failure: true
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
@@ -116,14 +128,18 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
           include-all-prereleases: true
+      - uses: julia-actions/install-juliaup@v3
+        if: ${{ matrix.juliaup_channel }}
+        with:
+          channel: ${{ matrix.juliaup_channel }}
       - uses: actions/checkout@v7
-        if: ${{ matrix.assertions }}
+        if: ${{ matrix.assertions && ! matrix.juliaup_channel }}
         with:
           repository: 'JuliaLang/julia'
           ref: ${{ format('release-{0}', matrix.version) }}
           path: 'julia'
       - name: Compile Julia
-        if: ${{ matrix.assertions }}
+        if: ${{ matrix.assertions && ! matrix.juliaup_channel }}
         run: |
           sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
@@ -217,6 +233,7 @@ jobs:
     timeout-minutes: 60
     name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.allow_failure || false }}
     env:
       JULIA_PROJECT: "lib/EnzymeTestUtils"
     strategy:
@@ -232,6 +249,14 @@ jobs:
         arch:
           - default
         libEnzyme: [packaged]
+        include:
+          # Enzyme does not support Julia 1.14 yet. This job shows the progress and does not
+          # block PRs.
+          - version: '1.14'
+            os: ubuntu-latest
+            arch: default
+            libEnzyme: packaged
+            allow_failure: true
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -281,6 +306,7 @@ jobs:
           - '1.11'
           - '1.12'
           - '1.13'
+          - '1.14'
         os:
           - ubuntu-latest
         arch:

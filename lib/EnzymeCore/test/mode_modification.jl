@@ -12,7 +12,7 @@ using Test
     @test Split(set_err_if_func_written(Reverse)) == set_err_if_func_written(ReverseSplitNoPrimal)
     @test Split(set_abi(Reverse, InlineABI)) == set_abi(ReverseSplitNoPrimal, InlineABI)
 
-    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false,:ReturnShadow,false,false,:Width,:ModifiedBetween,EnzymeCore.DefaultABI,false,false,:ShadowInit}()
+    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false, :ReturnShadow, false, false, :Width, :ModifiedBetween, EnzymeCore.DefaultABI, false, false, :ShadowInit}()
 
     @test Combined(Reverse) == Reverse
     @test Combined(ReverseWithPrimal) == ReverseWithPrimal
@@ -37,10 +37,16 @@ end
     end
 
     # Take the setting from a rule config, independently of runtime activity
-    for (config_sz, config_rt) in ((FwdConfig{false, true, 1, false, true}(),
-                                    FwdConfig{false, true, 1, true, false}()),
-                                   (RevConfig{false, true, 1, (), false, true}(),
-                                    RevConfig{false, true, 1, (), true, false}()))
+    for (config_sz, config_rt) in (
+            (
+                FwdConfig{false, true, 1, false, true}(),
+                FwdConfig{false, true, 1, true, false}(),
+            ),
+            (
+                RevConfig{false, true, 1, (), false, true}(),
+                RevConfig{false, true, 1, (), true, false}(),
+            ),
+        )
         for mode in (Forward, Reverse)
             @test set_strong_zero(mode, config_sz) === set_strong_zero(mode)
             @test set_strong_zero(mode, config_rt) === mode

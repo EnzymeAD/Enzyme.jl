@@ -37,9 +37,12 @@ function forward(config, ::Const{Core.typeof(f_ip)}, ::Type{<:Const}, x::Duplica
 end
 
 function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world = Base.get_world_counter())
-    TT = Base.unwrap_unionall(TT)
-    TT = Tuple{<:FwdConfig, <:Annotation{Core.typeof(f)}, Type{<:RT}, TT.parameters...}
-    return EnzymeRules.isapplicable(forward, TT; world)
+    # Rewrap, so the signature has no free type variables.
+    sig = Base.rewrap_unionall(
+        Tuple{<:FwdConfig, <:Annotation{Core.typeof(f)}, Type{<:RT}, Base.unwrap_unionall(TT).parameters...},
+        TT,
+    )
+    return EnzymeRules.isapplicable(forward, sig; world)
 end
 
 @testset "has_frule" begin

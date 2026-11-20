@@ -4,12 +4,14 @@
 # Can cause some tests to unnecessarily fail without runtime activity
 for N in 1:30
     argexprs = [Symbol(:arg, Symbol(i)) for i in 1:N]
-    eval(quote
-        function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
-            Base.@_inline_meta
-	    @inline f($(argexprs...); fkwargs...)
+    eval(
+        quote
+            function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
+                Base.@_inline_meta
+                return @inline f($(argexprs...); fkwargs...)
+            end
         end
-    end)
+    )
 end
 
 """
@@ -66,22 +68,23 @@ end
 ```
 """
 function test_reverse(
-    f,
-    ret_activity,
-    args...;
-    rng::Random.AbstractRNG=Random.default_rng(),
-    fdm=FiniteDifferences.central_fdm(5, 1),
-    fkwargs::NamedTuple=NamedTuple(),
-    rtol::Real=1e-9,
-    atol::Real=1e-9,
-    testset_name=nothing,
-    runtime_activity::Bool=false,
-    output_tangent=nothing)
+        f,
+        ret_activity,
+        args...;
+        rng::Random.AbstractRNG = Random.default_rng(),
+        fdm = FiniteDifferences.central_fdm(5, 1),
+        fkwargs::NamedTuple = NamedTuple(),
+        rtol::Real = 1.0e-9,
+        atol::Real = 1.0e-9,
+        testset_name = nothing,
+        runtime_activity::Bool = false,
+        output_tangent = nothing
+    )
     call_with_captured_kwargs = CallWithKWargs(fkwargs)
     if testset_name === nothing
         testset_name = "test_reverse: $f with return activity $ret_activity on $(_string_activity(args))"
     end
-    @testset "$testset_name" begin
+    return @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
         activities = map(Base.Fix1(auto_activity, rng), (f, args...))
         primals = map(get_primal, activities)
@@ -161,7 +164,7 @@ function test_reverse(
                 )
             else
                 @test_msg(
-                    "returned derivative for argument $(i-1) with activity $act_i must be `nothing`",
+                    "returned derivative for argument $(i - 1) with activity $act_i must be `nothing`",
                     dx_ad_i === nothing,
                 )
                 target_str = if i == 1
