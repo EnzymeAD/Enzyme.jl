@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Custom rules · Enzyme.jl</title><script data-outdated-warner src="../../assets/warner.js"></script><link rel="canonical" href="https://enzyme.mit.edu/julia/generated/custom_rule/"/><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script><script src="https://plausible.io/js/plausible.js" data-domain="enzyme.mit.edu" defer></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.svg" alt="Enzyme.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Enzyme.jl</a></span></div><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../box/">Box model</a></li><li><a class="tocitem" href="../autodiff/">AutoDiff API</a></li><li class="is-active"><a class="tocitem" href>Custom rules</a><ul class="internal"><li><a class="tocitem" href="#Defining-our-first-rule"><span>Defining our first rule</span></a></li><li><a class="tocitem" href="#Handling-more-activities"><span>Handling more activities</span></a></li><li><a class="tocitem" href="#Defining-a-reverse-mode-rule"><span>Defining a reverse-mode rule</span></a></li><li><a class="tocitem" href="#Marking-functions-inactive"><span>Marking functions inactive</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API</a></li><li><a class="tocitem" href="../../pullbacks/">Implementing pullbacks</a></li><li><a class="tocitem" href="../../dev_docs/">For developers</a></li><li><a class="tocitem" href="../../internal_api/">Internal API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Custom rules</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Custom rules</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/EnzymeAD/Enzyme.jl/blob/main/examples/custom_rule.jl" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Enzyme-custom-rules-tutorial"><a class="docs-heading-anchor" href="#Enzyme-custom-rules-tutorial">Enzyme custom rules tutorial</a><a id="Enzyme-custom-rules-tutorial-1"></a><a class="docs-heading-anchor-permalink" href="#Enzyme-custom-rules-tutorial" title="Permalink"></a></h1><p>The goal of this tutorial is to give a simple example of defining a custom rule with Enzyme. Specifically, our goal will be to write custom rules for the following function <code>f</code>:</p><pre><code class="language-julia hljs">function f(y, x)
+    y .= x.^2
+    return sum(y)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">f (generic function with 1 method)</code></pre><p>Our function <code>f</code> populates its first input <code>y</code> with the element-wise square of <code>x</code>. In addition, it returns <code>sum(y)</code> as output. What a sneaky function!</p><p>In this case, Enzyme can differentiate through <code>f</code> automatically. For example, using forward mode:</p><pre><code class="language-julia hljs">using Enzyme
+x  = [3.0, 1.0]
+dx = [1.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+g(y, x) = f(y, x)^2 # function to differentiate
+
+@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
+@show dy; # derivative of y w.r.t. x[1] when g is run</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) = (120.0,)
+dy = [6.0, 0.0]</code></pre><p>(See the <a href="../autodiff/">AutoDiff API tutorial</a> for more information on using <code>autodiff</code>.)</p><p>But there may be special cases where we need to write a custom rule to help Enzyme out. Let&#39;s see how to write a custom rule for <code>f</code>!</p><div class="admonition is-warning"><header class="admonition-header">Don&#39;t use custom rules unnecessarily!</header><div class="admonition-body"><p>Enzyme can efficiently handle a wide range of constructs, and so a custom rule should only be required in certain special cases. For example, a function may make a foreign call that Enzyme cannot differentiate, or we may have higher-level mathematical knowledge that enables us to write a more efficient rule. Even in these cases, try to make your custom rule encapsulate the minimum possible construct that Enzyme cannot differentiate, rather than expanding the scope of the rule unnecessarily. For pedagogical purposes, we will disregard this principle here and go ahead and write a custom rule for <code>f</code> :)</p></div></div><h2 id="Defining-our-first-rule"><a class="docs-heading-anchor" href="#Defining-our-first-rule">Defining our first rule</a><a id="Defining-our-first-rule-1"></a><a class="docs-heading-anchor-permalink" href="#Defining-our-first-rule" title="Permalink"></a></h2><p>First, we import the functions <a href="../../api/#EnzymeCore.EnzymeRules.forward"><code>EnzymeRules.forward</code></a>, <a href="../../api/#EnzymeCore.EnzymeRules.augmented_primal"><code>EnzymeRules.augmented_primal</code></a>, and <a href="../../api/#EnzymeCore.EnzymeRules.reverse"><code>EnzymeRules.reverse</code></a>. We need to overload <code>forward</code> in order to define a custom forward rule, and we need to overload <code>augmented_primal</code> and <code>reverse</code> in order to define a custom reverse rule.</p><pre><code class="language-julia hljs">import .EnzymeRules: forward, reverse, augmented_primal
+using .EnzymeRules</code></pre><p>In this section, we write a simple forward rule to start out:</p><pre><code class="language-julia hljs">function forward(func::Const{typeof(f)}, ::Type{&lt;:Duplicated}, y::Duplicated, x::Duplicated)
+    println(&quot;Using custom rule!&quot;)
+    ret = func.val(y.val, x.val)
+    y.dval .= 2 .* x.val .* x.dval
+    return Duplicated(ret, sum(y.dval))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">forward (generic function with 1 method)</code></pre><p>In the signature of our rule, we have made use of <code>Enzyme</code>&#39;s activity annotations. Let&#39;s break down each one:</p><ul><li>the <a href="../../api/#EnzymeCore.Const"><code>Const</code></a> annotation on <code>f</code> indicates that we accept a function <code>f</code> that does not have a derivative component, which makes sense since <code>f</code> is not a closure with data that could be differentiated.</li><li>the <a href="../../api/#EnzymeCore.Duplicated"><code>Duplicated</code></a> annotation given in the second argument annotates the return value of <code>f</code>. This means that our <code>forward</code> function should return an output of type <code>Duplicated</code>, containing the original output <code>sum(y)</code> and its derivative.</li><li>the <a href="../../api/#EnzymeCore.Duplicated"><code>Duplicated</code></a> annotations for <code>x</code> and <code>y</code> mean that our <code>forward</code> function handles inputs <code>x</code> and <code>y</code> which have been marked as <code>Duplicated</code>. We should update their shadows with their derivative contributions.</li></ul><p>In the logic of our forward function, we run the original function, populate <code>y.dval</code> (the shadow of <code>y</code>), and finally return a <code>Duplicated</code> for the output as promised. Let&#39;s see our rule in action! With the same setup as before:</p><pre><code class="language-julia hljs">x  = [3.0, 1.0]
+dx = [1.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+g(y, x) = f(y, x)^2 # function to differentiate
+
+@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
+@show dy; # derivative of y w.r.t. x[1] when g is run</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Using custom rule!
+autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) = (120.0,)
+dy = [6.0, 0.0]</code></pre><p>We see that our custom forward rule has been triggered and gives the same answer as before.</p><h2 id="Handling-more-activities"><a class="docs-heading-anchor" href="#Handling-more-activities">Handling more activities</a><a id="Handling-more-activities-1"></a><a class="docs-heading-anchor-permalink" href="#Handling-more-activities" title="Permalink"></a></h2><p>Our custom rule applies for the specific set of activities that are annotated for <code>f</code> in the above <code>autodiff</code> call. However, Enzyme has a number of other annotations. Let us consider a particular example, where the output has a <a href="../../api/#EnzymeCore.DuplicatedNoNeed"><code>DuplicatedNoNeed</code></a> annotation. This means we are only interested in its derivative, not its value. To squeeze out the last drop of performance, the below rule avoids computing the output of the original function and just computes its derivative.</p><pre><code class="language-julia hljs">function forward(func::Const{typeof(f)}, ::Type{&lt;:DuplicatedNoNeed}, y::Duplicated, x::Duplicated)
+    println(&quot;Using custom rule with DuplicatedNoNeed output.&quot;)
+    y.val .= x.val.^2
+    y.dval .= 2 .* x.val .* x.dval
+    return sum(y.dval)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">forward (generic function with 2 methods)</code></pre><p>Our rule is triggered, for example, when we call <code>autodiff</code> directly on <code>f</code>, as the return value&#39;s derivative isn&#39;t needed:</p><pre><code class="language-julia hljs">x  = [3.0, 1.0]
+dx = [1.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+@show autodiff(Forward, f, Duplicated(y, dy), Duplicated(x, dx)) # derivative of f w.r.t. x[1]
+@show dy; # derivative of y w.r.t. x[1] when f is run</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Using custom rule with DuplicatedNoNeed output.
+autodiff(Forward, f, Duplicated(y, dy), Duplicated(x, dx)) = (6.0,)
+dy = [6.0, 0.0]</code></pre><div class="admonition is-info"><header class="admonition-header">Custom rule dispatch</header><div class="admonition-body"><p>When multiple custom rules for a function are defined, the correct rule is chosen using <a href="https://docs.julialang.org/en/v1/manual/methods/#Methods">Julia&#39;s multiple dispatch</a>. In particular, it is important to understand that the custom rule does not <em>determine</em> the activities of the inputs and the return value: rather, <code>Enzyme</code> decides the activity annotations independently, and then <em>dispatches</em> to the custom rule handling the activities, if one exists. If a custom rule is specified for the correct function/argument types, but not the correct activity annotation, a runtime error will be thrown alerting the user to the missing activity rule rather than silently ignoring the rule.&quot;</p></div></div><p>Finally, it may be that either <code>x</code>, <code>y</code>, or the return value are marked as <a href="../../api/#EnzymeCore.Const"><code>Const</code></a>. We can in fact handle this case, along with the previous two cases, all together in a single rule:</p><pre><code class="language-julia hljs">Base.delete_method.(methods(forward, (Const{typeof(f)}, Vararg{Any}))) # delete our old rules
+
+function forward(func::Const{typeof(f)}, RT::Type{&lt;:Union{Const, DuplicatedNoNeed, Duplicated}},
+                 y::Union{Const, Duplicated}, x::Union{Const, Duplicated})
+    println(&quot;Using our general custom rule!&quot;)
+    y.val .= x.val.^2
+    if !(x isa Const) &amp;&amp; !(y isa Const)
+        y.dval .= 2 .* x.val .* x.dval
+    elseif !(y isa Const)
+        y.dval .= 0
+    end
+    dret = !(y isa Const) ? sum(y.dval) : zero(eltype(y.val))
+    if RT &lt;: Const
+        return sum(y.val)
+    elseif RT &lt;: DuplicatedNoNeed
+        return dret
+    else
+        return Duplicated(sum(y.val), dret)
+    end
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">forward (generic function with 1 method)</code></pre><p>Let&#39;s try out our rule:</p><pre><code class="language-julia hljs">x  = [3.0, 1.0]
+dx = [1.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+g(y, x) = f(y, x)^2 # function to differentiate
+
+@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
+@show autodiff(Forward, g, Const(y), Duplicated(x, dx)) # derivative of g w.r.t. x[1], with y annotated Const
+@show autodiff(Forward, g, Const(y), Const(x)); # derivative of g w.r.t. x[1], with x and y annotated Const</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Using our general custom rule!
+autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) = (120.0,)
+Using our general custom rule!
+autodiff(Forward, g, Const(y), Duplicated(x, dx)) = (0.0,)
+autodiff(Forward, g, Const(y), Const(x)) = (0.0,)</code></pre><p>Note that there are also exist batched duplicated annotations for forward mode, namely <a href="../../api/#EnzymeCore.BatchDuplicated"><code>BatchDuplicated</code></a> and <a href="../../api/#EnzymeCore.BatchDuplicatedNoNeed"><code>BatchDuplicatedNoNeed</code></a>, which are not covered in this tutorial.</p><h2 id="Defining-a-reverse-mode-rule"><a class="docs-heading-anchor" href="#Defining-a-reverse-mode-rule">Defining a reverse-mode rule</a><a id="Defining-a-reverse-mode-rule-1"></a><a class="docs-heading-anchor-permalink" href="#Defining-a-reverse-mode-rule" title="Permalink"></a></h2><p>Let&#39;s look at how to write a simple reverse-mode rule! First, we write a method for <a href="../../api/#EnzymeCore.EnzymeRules.augmented_primal"><code>EnzymeRules.augmented_primal</code></a>:</p><pre><code class="language-julia hljs">function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{&lt;:Active},
+                          y::Duplicated, x::Duplicated)
+    println(&quot;In custom augmented primal rule.&quot;)
+    # Compute primal
+    if needs_primal(config)
+        primal = func.val(y.val, x.val)
+    else
+        y.val .= x.val.^2 # y still needs to be mutated even if primal not needed!
+        primal = nothing
+    end
+    # Save x in tape if x will be overwritten
+    if overwritten(config)[3]
+        tape = copy(x.val)
+    else
+        tape = nothing
+    end
+    # Return an AugmentedReturn object with shadow = nothing
+    return AugmentedReturn(primal, nothing, tape)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">augmented_primal (generic function with 1 method)</code></pre><p>Let&#39;s unpack our signature for <code>augmented_primal</code> :</p><ul><li>We accepted a <a href="../../api/#EnzymeCore.EnzymeRules.Config"><code>EnzymeRules.Config</code></a> object with a specified width of 1, which means that our rule does not support batched reverse mode.</li><li>We annotated <code>f</code> with <a href="../../api/#EnzymeCore.Const"><code>Const</code></a> as usual.</li><li>We dispatched on an <a href="../../api/#EnzymeCore.Active"><code>Active</code></a> annotation for the return value. This is a special annotation for scalar values, such as our return value, that indicates that that we care about the value&#39;s derivative but we need not explicitly allocate a mutable shadow since it is a scalar value.</li><li>We annotated <code>x</code> and <code>y</code> with <a href="../../api/#EnzymeCore.Duplicated"><code>Duplicated</code></a>, similar to our first simple forward rule.</li></ul><p>Now, let&#39;s unpack the body of our <code>augmented_primal</code> rule:</p><ul><li>We checked if the <code>config</code> requires the primal. If not, we need not compute the return value, but we make sure to mutate <code>y</code> in all cases.</li><li>We checked if <code>x</code> could possibly be overwritten using the <code>Overwritten</code> attribute of <a href="../../api/#EnzymeCore.EnzymeRules.Config"><code>EnzymeRules.Config</code></a>. If so, we save the elements of <code>x</code> on the <code>tape</code> of the returned <a href="../../api/#EnzymeCore.EnzymeRules.AugmentedReturn"><code>EnzymeRules.AugmentedReturn</code></a> object.</li><li>We return a shadow of <code>nothing</code> since the return value is <a href="../../api/#EnzymeCore.Active"><code>Active</code></a> and hence does not need a shadow.</li></ul><p>Now, we write a method for <a href="../../api/#EnzymeCore.EnzymeRules.reverse"><code>EnzymeRules.reverse</code></a>:</p><pre><code class="language-julia hljs">function reverse(config::ConfigWidth{1}, func::Const{typeof(f)}, dret::Active, tape,
+                 y::Duplicated, x::Duplicated)
+    println(&quot;In custom reverse rule.&quot;)
+    # retrieve x value, either from original x or from tape if x may have been overwritten.
+    xval = overwritten(config)[3] ? tape : x.val
+    # accumulate dret into x&#39;s shadow. don&#39;t assign!
+    x.dval .+= 2 .* xval .* dret.val
+    # also accumulate any derivative in y&#39;s shadow into x&#39;s shadow.
+    x.dval .+= 2 .* xval .* y.dval
+    y.dval .= 0
+    return (nothing, nothing)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">reverse (generic function with 1 method)</code></pre><p>Let&#39;s make a few observations about our reverse rule:</p><ul><li>The activities used in the signature correspond to what we used for <code>augmented_primal</code>.</li><li>However, for <a href="../../api/#EnzymeCore.Active"><code>Active</code></a> return types such as in this case, we now receive an <em>instance</em> <code>dret</code> of <a href="../../api/#EnzymeCore.Active"><code>Active</code></a> for the return type, not just a type annotation, which stores the derivative value for <code>ret</code> (not the original return value!). For the other annotations (e.g. <a href="../../api/#EnzymeCore.Duplicated"><code>Duplicated</code></a>), we still receive only the type. In that case, if necessary a reference to the shadow of the output should be placed on the tape in <code>augmented_primal</code>.</li><li>Using <code>dret.val</code> and <code>y.dval</code>, we accumulate the backpropagated derivatives for <code>x</code> into its shadow <code>x.dval</code>. Note that we have to accumulate from both <code>y.dval</code> and <code>dret.val</code>. This is because in reverse-mode AD we have to sum up the derivatives from all uses: if <code>y</code> was read after our function, we need to consider derivatives from that use as well.</li><li>Finally, we zero-out <code>y</code>&#39;s shadow.  This is because <code>y</code> is overwritten within <code>f</code>, so there is no derivative w.r.t. to the <code>y</code> that was originally inputted.</li></ul><p>Finally, let&#39;s see our reverse rule in action!</p><pre><code class="language-julia hljs">x  = [3.0, 1.0]
+dx = [0.0, 0.0]
+y  = [0.0, 0.0]
+dy = [0.0, 0.0]
+
+g(y, x) = f(y, x)^2
+
+autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx))
+@show dx # derivative of g w.r.t. x
+@show dy; # derivative of g w.r.t. y</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">In custom augmented primal rule.
+In custom reverse rule.
+dx = [120.0, 40.0]
+dy = [0.0, 0.0]</code></pre><p>Let&#39;s also try a function which mutates <code>x</code> after running <code>f</code>, and also uses <code>y</code> directly rather than only <code>ret</code> after running <code>f</code> (but ultimately gives the same result as above):</p><pre><code class="language-julia hljs">function h(y, x)
+    ret = f(y, x)
+    x .= x.^2
+    return ret * sum(y)
+end
+
+x  = [3.0, 1.0]
+y  = [0.0, 0.0]
+dx .= 0
+dy .= 0
+
+autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
+@show dx # derivative of h w.r.t. x
+@show dy; # derivative of h w.r.t. y</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">In custom augmented primal rule.
+In custom reverse rule.
+dx = [120.0, 40.0]
+dy = [0.0, 0.0]</code></pre><h2 id="Marking-functions-inactive"><a class="docs-heading-anchor" href="#Marking-functions-inactive">Marking functions inactive</a><a id="Marking-functions-inactive-1"></a><a class="docs-heading-anchor-permalink" href="#Marking-functions-inactive" title="Permalink"></a></h2><p>If we want to tell Enzyme that the function call does not affect the differentiation result in any form (i.e. not by side effects or through its return values), we can simply use <a href="../../api/#EnzymeCore.EnzymeRules.inactive"><code>EnzymeRules.inactive</code></a>. So long as there exists a matching dispatch to <a href="../../api/#EnzymeCore.EnzymeRules.inactive"><code>EnzymeRules.inactive</code></a>, the function will be considered inactive. For example:</p><pre><code class="language-julia hljs">printhi() = println(&quot;Hi!&quot;)
+EnzymeRules.inactive(::typeof(printhi), args...) = nothing
+
+function k(x)
+    printhi()
+    return x^2
+end
+
+autodiff(Forward, k, Duplicated(2.0, 1.0))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(4.0,)</code></pre><p>Or for a case where we incorrectly mark a function inactive:</p><pre><code class="language-julia hljs">double(x) = 2*x
+EnzymeRules.inactive(::typeof(double), args...) = nothing
+
+autodiff(Forward, x -&gt; x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(1.0,)</code></pre><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../autodiff/">« AutoDiff API</a><a class="docs-footer-nextpage" href="../../api/">API »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.25 on <span class="colophon-date" title="Thursday 13 July 2023 17:10">Thursday 13 July 2023</span>. Using Julia version 1.9.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
