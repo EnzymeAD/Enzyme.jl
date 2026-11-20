@@ -4933,6 +4933,51 @@ function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sr
 end
 
 """
+    replace_null_tracked!(builder, val, fill)
+
+Return `val` with every GC-tracked pointer in it that is null replaced by `fill`.
+
+Tape slots that the reverse pass does not read (e.g. caches of a branch not taken) are
+normally filled with `nothing`. Some tapes miss this: a nested sub-tape that is stored as
+a whole aggregate, built from `poison`, leaves its tracked slots unwritten (cf.
+EnzymeAD/Enzyme#3152). Such a slot reads back as null from the (zero-initialized)
+`returnRoots`, and if it is the first tracked pointer of the tape, Julia takes the whole
+inline-stored tape for `#undef`: unpacking the `(tape, primal, shadow)` returned by an
+`AugmentedForwardThunk` throws an `UndefRefError`.
+"""
+function replace_null_tracked!(builder::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fill::LLVM.Value))::LLVM.Value
+    ty = val.value_type
+    if isa(ty, LLVM.PointerType)
+        any_jltypes(ty) || return val
+        fillv = fill
+        if fillv.value_type != ty
+            fillv = addrspacecast!(builder, fillv, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), ty.addrspace))
+            if fillv.value_type != ty
+                fillv = bitcast!(builder, fillv, ty)
+            end
+        end
+        isnull = icmp!(builder, LLVM.API.LLVMIntEQ, val, LLVM.null(ty))
+        return select!(builder, isnull, fillv, val)
+    end
+    n = if isa(ty, LLVM.StructType)
+        length(LLVM.elements(ty))
+    elseif isa(ty, LLVM.ArrayType)
+        length(ty)
+    else
+        return val
+    end
+    any_jltypes(ty) || return val
+    for i in 1:n
+        elem = extract_value!(builder, val, i - 1)
+        newelem = replace_null_tracked!(builder, elem, fill)
+        if newelem != elem
+            val = insert_value!(builder, val, newelem, i - 1)
+        end
+    end
+    return val
+end
+
+"""
     extract_roots_from_value!(builder, sret, roots)
 
 Store the GC-tracked fields of the value `sret` into the `returnRoots` array `roots`,
@@ -7839,7 +7884,7 @@ const DumpLLVMCall = Ref(false)
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
     activate(ctx)
-    (ir, fn, combinedReturn) = try
+    (ir, fn, combinedReturn, fill_tape) = try
 
         if is_adjoint
             NT = Tuple{ActiveRetTypes...}
@@ -7949,6 +7994,17 @@ const DumpLLVMCall = Ref(false)
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
+        # The tape comes first in the return of an augmented forward pass. If it holds
+        # GC-tracked slots, pass `nothing` along to fill the ones the thunk leaves null
+        # (see `replace_null_tracked!`).
+        fill_tape = CC <: AugmentedForwardThunk && uses_sret &&
+            isa(jltype, LLVM.StructType) && !isempty(LLVM.elements(jltype)) &&
+            !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType)) &&
+            any_jltypes(LLVM.elements(jltype)[1])
+        if fill_tape
+            push!(llvmtys, T_prjlvalue)
+        end
+
         T_ret = jltype
         # if returnRoots
         #     T_ret = T_prjlvalue
@@ -7969,6 +8025,7 @@ const DumpLLVMCall = Ref(false)
             else
                 lfn = popfirst!(callparams)
             end
+            tape_fill = fill_tape ? pop!(callparams) : nothing
 
             if returnRoots
                 tracked = CountTrackedPointers(jltype)
@@ -8068,6 +8125,14 @@ const DumpLLVMCall = Ref(false)
                 end
             end
 
+            if fill_tape
+                tape_val = extract_value!(builder, r, 0)
+                new_tape = replace_null_tracked!(builder, tape_val, tape_fill)
+                if new_tape != tape_val
+                    r = insert_value!(builder, r, new_tape, 0)
+                end
+            end
+
             if T_ret != T_void
                 ret!(builder, r)
             else
@@ -8087,7 +8152,7 @@ const DumpLLVMCall = Ref(false)
 
             ir = string(mod)
             fn = llvm_f.name
-            (ir, fn, combinedReturn)
+            (ir, fn, combinedReturn, fill_tape)
         end
     finally
         deactivate(ctx)
@@ -8096,6 +8161,11 @@ const DumpLLVMCall = Ref(false)
 
     @assert length(types) == length(ccexprs)
 
+    if fill_tape
+        # the filler for null tape slots, see `replace_null_tracked!`
+        types = Any[types..., Any]
+        ccexprs = Union{Expr,Symbol}[ccexprs..., :nothing]
+    end
 
     if !(isghosttype(PT) || Core.Compiler.isconstType(PT))
         return quote
