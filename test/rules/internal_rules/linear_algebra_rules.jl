@@ -689,3 +689,43 @@ end
         @test res[2] ≈ 2fd
     end
 end
+
+@testset "Symmetric and Hermitian backslash (#2967)" begin
+    for T in (Float64, ComplexF64), W in (Symmetric, Hermitian), uplo in (:U, :L), rhs_mat in (false, true)
+        T === ComplexF64 && W === Symmetric && continue
+        n = 3
+        A0 = randn(T, n, n)
+        A_base = W === Hermitian ? (A0 + A0' + 4n * I) : (A0 + transpose(A0) + 4n * I)
+        B = rhs_mat ? randn(T, n, 2) : randn(T, n)
+
+        f_solve(A_in, B_in) = real(sum(abs2, W(A_in, uplo) \ B_in))
+
+        dA = zero(A_base)
+        dB = zero(B)
+        autodiff(Reverse, f_solve, Active, Duplicated(copy(A_base), dA), Duplicated(copy(B), dB))
+
+        if T === Float64
+            dA_dir = randn(n, n)
+            dB_dir = randn(size(B)...)
+            fd = central_fdm(5, 1)(t -> f_solve(A_base + t * dA_dir, B + t * dB_dir), 0.0)
+            @test dot(dA, dA_dir) + dot(dB, dB_dir) ≈ fd
+            fwd = autodiff(Forward, f_solve, Duplicated(copy(A_base), copy(dA_dir)), Duplicated(copy(B), copy(dB_dir)))[1]
+            @test fwd ≈ fd
+            bfwd = autodiff(
+                Forward,
+                f_solve,
+                BatchDuplicated(copy(A_base), (copy(dA_dir), 2 .* dA_dir)),
+                BatchDuplicated(copy(B), (copy(dB_dir), 2 .* dB_dir)),
+            )[1]
+            @test bfwd[1] ≈ fd
+            @test bfwd[2] ≈ 2fd
+        else
+            dB_dir = randn(ComplexF64, size(B)...)
+            fd_b = central_fdm(5, 1)(t -> f_solve(A_base, B + t * dB_dir), 0.0)
+            @test real(dot(dB, dB_dir)) ≈ fd_b
+            dA_dir = randn(ComplexF64, n, n)
+            fd_a = central_fdm(5, 1)(t -> f_solve(A_base + t * dA_dir, B), 0.0)
+            @test real(dot(dA, dA_dir)) ≈ fd_a
+        end
+    end
+end

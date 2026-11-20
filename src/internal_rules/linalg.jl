@@ -217,6 +217,182 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
+const _EnzymeSymHerm{T, S} = Union{Symmetric{T, S}, Hermitian{T, S}}
+
+_symherm_tangent(A::Symmetric, dA::Symmetric) = Symmetric(dA.data, Symbol(A.uplo))
+_symherm_tangent(A::Hermitian, dA::Hermitian) = Hermitian(dA.data, Symbol(A.uplo))
+
+function _symherm_cotangent_accum!(dA::Symmetric, uplo::Char, G::AbstractMatrix)
+    data = dA.data
+    n = size(data, 1)
+    if uplo == 'U'
+        for j in 1:n
+            for i in 1:(j - 1)
+                data[i, j] -= G[i, j] + G[j, i]
+            end
+            data[j, j] -= G[j, j]
+        end
+    else
+        for j in 1:n
+            data[j, j] -= G[j, j]
+            for i in (j + 1):n
+                data[i, j] -= G[i, j] + G[j, i]
+            end
+        end
+    end
+    return nothing
+end
+
+function _symherm_cotangent_accum!(dA::Hermitian, uplo::Char, G::AbstractMatrix)
+    data = dA.data
+    n = size(data, 1)
+    if uplo == 'U'
+        for j in 1:n
+            for i in 1:(j - 1)
+                data[i, j] -= G[i, j] + conj(G[j, i])
+            end
+            data[j, j] -= real(G[j, j])
+        end
+    else
+        for j in 1:n
+            data[j, j] -= real(G[j, j])
+            for i in (j + 1):n
+                data[i, j] -= G[i, j] + conj(G[j, i])
+            end
+        end
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(\)},
+        RT::Type{<:Union{Const, Duplicated, BatchDuplicated, DuplicatedNoNeed, BatchDuplicatedNoNeed}},
+        A::Annotation{AT},
+        b::Annotation{BT},
+    ) where {AT <: _EnzymeSymHerm{<:Any, <:Array}, BT <: Array}
+    fact = compute_lu_cache(Matrix(A.val), b.val)
+    res = (fact \ b.val)::eltype(RT)
+    if RT <: Const || !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.needs_primal(config) ? res : nothing
+    end
+    N = EnzymeRules.width(config)
+    dres = ntuple(Val(N)) do i
+        Base.@_inline_meta
+        rhs = if b isa Const
+            zero(b.val)
+        else
+            copy(N == 1 ? b.dval : b.dval[i])
+        end
+        if !(A isa Const)
+            dA = _symherm_tangent(A.val, N == 1 ? A.dval : A.dval[i])
+            mul!(rhs, dA, res, -1, 1)
+        end
+        return (fact \ rhs)::eltype(RT)
+    end
+    if EnzymeRules.needs_primal(config)
+        return N == 1 ? Duplicated(res, dres[1]) : BatchDuplicated(res, dres)
+    else
+        return N == 1 ? dres[1] : dres
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        A::Annotation{AT},
+        b::Annotation{BT},
+    ) where {T, S <: Array, RT, AT <: _EnzymeSymHerm{T, S}, BT <: Array}
+    cache_A = compute_lu_cache(Matrix(A.val), b.val)
+    res = (cache_A \ b.val)::eltype(RT)
+
+    dres = if EnzymeRules.width(config) == 1
+        zero(res)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
+        end
+    end
+
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    cache_res = EnzymeRules.needs_primal(config) ? copy(res) : res
+    uplo = A.val.uplo
+
+    UT = Union{
+        LinearAlgebra.Diagonal{T, onedimensionalize(BT)},
+        LinearAlgebra.LowerTriangular{T, S},
+        LinearAlgebra.UpperTriangular{T, S},
+        LinearAlgebra.LU{T, S, Vector{Int}},
+        LinearAlgebra.QRPivoted{T, S, onedimensionalize(BT), Vector{Int}},
+    }
+
+    cache = NamedTuple{
+        (Symbol("1"), Symbol("2"), Symbol("3"), Symbol("4")),
+        Tuple{
+            eltype(RT),
+            EnzymeRules.needs_shadow(config) ?
+                (
+                    EnzymeRules.width(config) == 1 ? eltype(RT) :
+                    NTuple{EnzymeRules.width(config), eltype(RT)}
+                ) : Nothing,
+            UT,
+            Char,
+        },
+    }((cache_res, dres, cache_A, uplo))
+
+    return EnzymeRules.AugmentedReturn{
+        EnzymeRules.primal_type(config, RT),
+        EnzymeRules.shadow_type(config, RT),
+        typeof(cache),
+    }(
+        retres,
+        dres,
+        cache,
+    )
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        cache,
+        A::Annotation{<:_EnzymeSymHerm{<:Any, <:Array}},
+        b::Annotation{<:Array},
+    ) where {RT}
+    y, dys, cache_A, uplo = cache
+
+    if EnzymeRules.width(config) == 1
+        dys = (dys,)
+    end
+
+    dAs = if EnzymeRules.width(config) == 1
+        typeof(A) <: Const ? (nothing,) : (A.dval,)
+    else
+        typeof(A) <: Const ? ntuple(Returns(nothing), Val(EnzymeRules.width(config))) : A.dval
+    end
+
+    dbs = if EnzymeRules.width(config) == 1
+        typeof(b) <: Const ? (nothing,) : (b.dval,)
+    else
+        typeof(b) <: Const ? ntuple(Returns(nothing), Val(EnzymeRules.width(config))) : b.dval
+    end
+
+    for (dA, db, dy) in zip(dAs, dbs, dys)
+        z = _trisolve(adjoint(cache_A), dy)
+        if !(typeof(A) <: Const)
+            _symherm_cotangent_accum!(dA, uplo, z * adjoint(y))
+        end
+        if !(typeof(b) <: Const)
+            db .+= z
+        end
+        dy .= eltype(dy)(0)
+    end
+
+    return (nothing, nothing)
+end
+
 const EnzymeTriangulars = Union{
     UpperTriangular{<:Complex},
     LowerTriangular{<:Complex},
