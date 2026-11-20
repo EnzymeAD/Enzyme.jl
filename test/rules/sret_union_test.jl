@@ -233,3 +233,113 @@ union_const_caller(x, n) = (r = union_const_primal(x, n); r === nothing ? 0.0 : 
     @test res[2] ≈ 8.0
     @test autodiff(Forward, union_const_caller, BatchDuplicated(-3.0, (1.0, 2.0)), Const(2))[1] |> values == (0.0, 0.0)
 end
+
+# The tape is an isbits union, which a member stores inline with a selector byte.
+# The rules scale by 100, so the tests can tell that they ran.
+@noinline union_tape_bits(x) = x * x
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig, ::Const{typeof(union_tape_bits)}, ::Type{<:Active}, x::Active
+    )
+    primal = EnzymeRules.needs_primal(config) ? union_tape_bits(x.val) : nothing
+    P = typeof(primal)
+    if x.val > 0.0
+        tape::Union{Nothing, Float64} = x.val > 1.0 ? 2 * x.val : nothing
+        return EnzymeRules.AugmentedReturn{P, Nothing, Union{Nothing, Float64}}(primal, nothing, tape)
+    else
+        return EnzymeRules.AugmentedReturn(primal, nothing, Int(round(2 * x.val)))
+    end
+end
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig, ::Const{typeof(union_tape_bits)}, dret::Active, tape, x::Active
+    )
+    return (100 * (tape === nothing ? -1.0 : Float64(tape)) * dret.val,)
+end
+
+@static if VERSION >= v"1.14.0-DEV.165"
+    @testset "Union sret return rule with an isbits union tape" begin
+        @test autodiff(Reverse, union_tape_bits, Active, Active(3.0))[1][1] ≈ 600.0
+        @test autodiff(Reverse, union_tape_bits, Active, Active(0.5))[1][1] ≈ -100.0
+        @test autodiff(Reverse, union_tape_bits, Active, Active(-3.0))[1][1] ≈ -600.0
+    end
+end
+
+# Forward rules for an isbits union return. A rule result stores the union inline,
+# and a batched rule holds the shadows boxed in an `NTuple`.
+for (fname, FT) in ((:union_bits_f64, Float64), (:union_bits_f16, Float16))
+    @eval begin
+        @noinline $fname(x, b) = b ? x * x : nothing
+        function EnzymeRules.forward(
+                config::EnzymeRules.FwdConfig, ::Const{typeof($fname)}, ::Type,
+                x::Union{Duplicated, BatchDuplicated}, b::Const
+            )
+            U = Union{Nothing, $FT}
+            primal::U = $fname(x.val, b.val)
+            if x isa Duplicated
+                shadow::U = b.val ? $FT(100) * x.dval : nothing
+                needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+                needs_both && return Duplicated{U}(primal, shadow)
+                EnzymeRules.needs_shadow(config) && return shadow
+            else
+                N = EnzymeRules.width(config)
+                shadows = ntuple(i -> (b.val ? $FT(100) * x.dval[i] : nothing)::U, Val(N))
+                needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+                needs_both && return BatchDuplicated{U, N}(primal, shadows)
+                EnzymeRules.needs_shadow(config) && return shadows
+            end
+            return EnzymeRules.needs_primal(config) ? primal : nothing
+        end
+    end
+end
+union_bits_caller(f::F, x, b) where {F} = (r = f(x, b); r === nothing ? zero(x) : 3 * r)
+union_bits_f64_caller(x, b) = union_bits_caller(union_bits_f64, x, b)
+union_bits_f16_caller(x, b) = union_bits_caller(union_bits_f16, x, b)
+union_bits_f64_direct(x, b) = union_bits_f64(x, b)
+
+@testset "Forward rule for an isbits union return" begin
+    @test autodiff(Forward, union_bits_f64_caller, Duplicated(3.0, 1.0), Const(true))[1] ≈ 300.0
+    @test autodiff(Forward, union_bits_f64_caller, Duplicated(3.0, 1.0), Const(false))[1] ≈ 0.0
+    @test autodiff(Forward, union_bits_f64_direct, Duplicated(3.0, 1.0), Const(true))[1] ≈ 100.0
+    @test autodiff(Forward, union_bits_f16_caller, Duplicated(Float16(3), Float16(1)), Const(true))[1] ≈ Float16(300)
+
+    res = autodiff(Forward, union_bits_f64_caller, BatchDuplicated(3.0, (1.0, 2.0)), Const(true))[1]
+    @test values(res) == (300.0, 600.0)
+    @test values(autodiff(Forward, union_bits_f64_caller, BatchDuplicated(3.0, (1.0, 2.0)), Const(false))[1]) == (0.0, 0.0)
+    res = autodiff(Forward, union_bits_f64_direct, BatchDuplicated(3.0, (1.0, 2.0)), Const(true))[1]
+    @test values(res) == (100.0, 200.0)
+    res = autodiff(ForwardWithPrimal, union_bits_f64_direct, BatchDuplicated(3.0, (1.0, 2.0)), Const(true))
+    @test values(res[1]) == (100.0, 200.0)
+    @test res[2] ≈ 9.0
+    res = autodiff(Forward, union_bits_f16_caller, BatchDuplicated(Float16(3), (Float16(1), Float16(2))), Const(true))[1]
+    @test values(res) == (Float16(300), Float16(600))
+end
+
+# The data of the union return is active, but its GC pointers (a `Vector{Int}`)
+# are not: since Julia 1.14 the union buffer and the return roots differ in activity.
+const UnionInactiveRoots = Union{Nothing, Tuple{Float64, Vector{Int}}}
+@noinline union_inactive_roots(x, n, b) = b ? (x, [n]) : nothing
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(union_inactive_roots)}, ::Type,
+        x::Union{Duplicated, BatchDuplicated}, n::Const, b::Const
+    )
+    primal::UnionInactiveRoots = union_inactive_roots(x.val, n.val, b.val)
+    if x isa Duplicated
+        shadow::UnionInactiveRoots = b.val ? (100 * x.dval, [0]) : nothing
+        needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        needs_both && return Duplicated{UnionInactiveRoots}(primal, shadow)
+        EnzymeRules.needs_shadow(config) && return shadow
+    else
+        N = EnzymeRules.width(config)
+        shadows = ntuple(i -> (b.val ? (100 * x.dval[i], [0]) : nothing)::UnionInactiveRoots, Val(N))
+        needs_both = EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        needs_both && return BatchDuplicated{UnionInactiveRoots, N}(primal, shadows)
+        EnzymeRules.needs_shadow(config) && return shadows
+    end
+    return EnzymeRules.needs_primal(config) ? primal : nothing
+end
+union_inactive_roots_caller(x, n, b) = (r = union_inactive_roots(x, n, b); r === nothing ? 0.0 : r[1] * r[2][1])
+
+@testset "Forward rule for a union return with inactive GC pointers" begin
+    @test autodiff(Forward, union_inactive_roots_caller, Duplicated(3.0, 1.0), Const(2), Const(true))[1] ≈ 200.0
+    res = autodiff(Forward, union_inactive_roots_caller, BatchDuplicated(3.0, (1.0, 2.0)), Const(2), Const(true))[1]
+    @test values(res) == (200.0, 400.0)
+end
