@@ -14,8 +14,8 @@ struct CompilerInstance
     jit::LLVM.JuliaOJIT
     # The JITDylib that defines the globals of Enzyme. `lookup(name)` also uses it.
     # Before Julia 1.14, this is the one JITDylib that Julia's JIT gives to its users. Enzyme
-    # adds each module to it. Since Julia 1.14, this is Julia's `JuliaGlobals`, and each module
-    # has its own JITDylib (see `dylib`).
+    # adds each module to it. Since Julia 1.14, this is a JITDylib that only has the globals
+    # of Enzyme, and each module has its own JITDylib that resolves names in it (see `dylib`).
     jd::LLVM.JITDylib
     lctm::Union{LLVM.LazyCallThroughManager, Nothing}
     ism::Union{LLVM.IndirectStubsManager, Nothing}
@@ -92,11 +92,16 @@ function setup_globals()
 
     # `jd_globals` is the JITDylib that defines the globals of Enzyme for each module.
     @static if VERSION >= v"1.14.0-DEV.2171"
-        # Each JITDylib that Julia's JIT creates resolves the names in `JuliaGlobals` and the
-        # symbols of the process (JuliaLang/julia#60988). Julia's own JITDylib also resolves
-        # the names in `JuliaGlobals`. Julia compiles the thunks of the `InlineABI`, which
-        # refer to the globals of Enzyme.
-        jd_globals = something(LLVM.lookup_dylib(es, "JuliaGlobals"))
+        # Each JITDylib that Julia's JIT creates resolves the names of Julia and the symbols
+        # of the process (JuliaLang/julia#60988), but not the names in a JITDylib of a
+        # different user. `dylib` adds this JITDylib to the link order of each JITDylib that
+        # Enzyme creates.
+        jd_globals = JITDylib(lljit, "enzyme.globals")
+        # Julia compiles the thunks of the `InlineABI` in its own JITDylib, and these thunks
+        # refer to the globals of Enzyme. Julia's JITDylib resolves a name in the JITDylibs
+        # of its link order in sequence, so it uses `jd_globals` only for a name that Julia
+        # does not define.
+        LLVM.add_to_link_order!(something(LLVM.lookup_dylib(es, "JuliaOJIT")), jd_globals)
     else
         # Julia's JIT has one JITDylib for all its users.
         jd_globals = lljit.external_dylib
@@ -118,7 +123,8 @@ end
 # Return the JITDylib to add one module to.
 #
 # Since Julia 1.14 (JuliaLang/julia#60988), each call creates a new JITDylib. The new JITDylib
-# resolves the names that Julia, the process and `setup_globals` define. No other JITDylib
+# resolves the names that Julia and the process define, and the globals of Enzyme, because
+# the JITDylib of `setup_globals` is in its link order. No other JITDylib
 # resolves the names that the module defines. Thus two modules can define the same name. Each
 # module must define all other names that it refers to. Julia's codegen gives names that are
 # unique only in one module (JuliaLang/julia#60031).
@@ -127,7 +133,9 @@ end
 # gives names that are unique in the session.
 function dylib()
     @static if VERSION >= v"1.14.0-DEV.2171"
-        return JITDylib(jit[].jit, "enzyme")
+        jd = JITDylib(jit[].jit, "enzyme")
+        LLVM.add_to_link_order!(jd, jit[].jd)
+        return jd
     else
         return jit[].jd
     end
