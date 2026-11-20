@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 45
     name: Integration Tests - ${{ matrix.package }} - Julia ${{ matrix.version }}
     runs-on: ${{ matrix.os }}
+    # Enzyme does not support Julia 1.14 yet; these jobs show progress and do not block PRs.
+    continue-on-error: ${{ matrix.version == '1.14' }}
     container:
       image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:cd45d851f5ea544f88d042eafefa53d948c229fffcab6189019324e3b02b505a' ) || '' }}
     env:
@@ -44,6 +46,7 @@ jobs:
           - '1.11'
           - '1.12'
           - '1.13'
+          - '1.14'
         os:
           - linux-x86-n4-32
         package:
