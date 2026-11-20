@@ -29,3 +29,39 @@ jit_unstable(x) = Base.inferencebarrier(x)[1]^2
     autodiff(Enzyme.set_abi(Reverse, Enzyme.InlineABI), jit_unstable, Active, Duplicated(x, dx))
     @test dx ≈ [4.0]
 end
+
+@static if Enzyme.Compiler.HAS_GPUCOMPILER_2
+    using GPUCompiler: CompilerJob, CompilerConfig, relocation_namespace
+
+    namespace_f(x) = sin(x) * x
+
+    function namespace_of(mode, rt, args; runtimeActivity = false, modifiedBetween = (false, false))
+        mi = Enzyme.Compiler.my_methodinstance(nothing, typeof(namespace_f), Tuple{Float64})
+        params = Enzyme.Compiler.EnzymeCompilerParams(
+            Tuple{Const{typeof(namespace_f)}, args}, mode, 1, rt, true, true,
+            modifiedBetween, false, false, Nothing, Enzyme.FFIABI, false, runtimeActivity, false
+        )
+        config = CompilerConfig(Enzyme.Compiler.EnzymeTarget(), params; kernel = false)
+        return relocation_namespace(CompilerJob(mi, config, Base.get_world_counter()))
+    end
+
+    @testset "relocation_namespace has the Enzyme options" begin
+        API = Enzyme.API
+        rev = namespace_of(API.DEM_ReverseModeCombined, Active{Float64}, Active{Float64})
+        fwd = namespace_of(API.DEM_ForwardMode, Duplicated{Float64}, Duplicated{Float64})
+        ra = namespace_of(
+            API.DEM_ReverseModeCombined, Active{Float64}, Active{Float64}; runtimeActivity = true
+        )
+        @test rev == "_Z11namespace_f7Float64_rev_w1_rA_aCA_FFIABI_aw_o3"
+        @test fwd == "_Z11namespace_f7Float64_fwd_w1_rD_aCD_FFIABI_aw_o3"
+        @test ra == "_Z11namespace_f7Float64_rev_w1_ra_rA_aCA_FFIABI_aw_o3"
+        overwritten = namespace_of(
+            API.DEM_ReverseModeCombined, Active{Float64}, Active{Float64};
+            modifiedBetween = (true, false)
+        )
+        @test overwritten == "_Z11namespace_f7Float64_rev_w1_rA_aCA_FFIABI_aw_o2"
+        @test Enzyme.Compiler.hex_mask((false, false, false, false, true)) == "01"
+        @test Enzyme.Compiler.hex_mask((true, true)) == "3"
+        @test Enzyme.Compiler.hex_mask(()) == ""
+    end
+end

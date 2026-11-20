@@ -209,15 +209,53 @@ const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
         return string(name)
     end
 
+    # The word for a derivative mode, for `relocation_namespace`. The values are those of
+    # `CDerivativeMode` in Enzyme's CApi.h, which also has the two forward split modes.
+    function mode_word(mode::API.CDerivativeMode)
+        m = Int(mode)
+        m == 0 && return "fwd"
+        m == 1 && return "aug"
+        m == 2 && return "grad"
+        m == 3 && return "rev"
+        m == 4 && return "fwdsplit"
+        m == 5 && return "fwderr"
+        return "mode" * string(m)
+    end
+
+    # The bits as hex digits, as `hexMask` in Enzyme's GradientUtils.cpp: bit i is argument i,
+    # 4 bits per digit, lowest index first, trailing '0' digits removed.
+    function hex_mask(bits)
+        io = IOBuffer()
+        nibble = 0
+        j = 0
+        for bit in bits
+            if bit
+                nibble |= 1 << j
+            end
+            j += 1
+            if j == 4
+                print(io, "0123456789abcdef"[nibble + 1])
+                nibble = 0
+                j = 0
+            end
+        end
+        if j != 0
+            print(io, "0123456789abcdef"[nibble + 1])
+        end
+        return String(rstrip(String(take!(io)), '0'))
+    end
+
     # GPUCompiler gives the names of a job (relocation slots, and the entry of a nested module
     # in `nested_codegen!`) its `relocation_namespace`, which is the mangled signature. Enzyme
     # can compile one signature with different options, so add the options to the namespace.
     # The result must be the same in each session, so it does not use `hash` or the world.
+    # Where the options overlap, the tokens are those of the names of separately compiled
+    # derivatives in Enzyme (`GradientUtils::externalShadowName`, EnzymeAD/Enzyme#3383).
     function GPUCompiler.relocation_namespace(
             @nospecialize(job::CompilerJob{<:Any, PrimalCompilerParams})
         )
         default = invoke(GPUCompiler.relocation_namespace, Tuple{CompilerJob}, job)
-        return default * "_p" * string(Int(job.config.params.mode))
+        return default * "_primal_" * mode_word(job.config.params.mode)
     end
 
     function GPUCompiler.relocation_namespace(
@@ -226,22 +264,23 @@ const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
         default = invoke(GPUCompiler.relocation_namespace, Tuple{CompilerJob}, job)
         params = job.config.params
         io = IOBuffer()
-        print(io, default, "_e", Int(params.mode), "w", params.width)
-        print(io, "r", annotation_tag(params.rt), "a")
+        print(io, default, "_", mode_word(params.mode), "_w", params.width)
+        params.runtimeActivity && print(io, "_ra")
+        params.strongZero && print(io, "_sz")
+        # The options below exist only in Enzyme.jl.
+        print(io, "_r", annotation_tag(params.rt), "_a")
         for T in params.TT.parameters
             print(io, annotation_tag(T))
         end
-        print(io, "_", nameof(params.ABI), "_")
-        for flag in (
-                params.run_enzyme, params.abiwrap, params.returnPrimal, params.shadowInit,
-                params.err_if_func_written, params.runtimeActivity, params.strongZero,
-            )
-            print(io, flag ? '1' : '0')
-        end
-        print(io, "m")
-        for flag in params.modifiedBetween
-            print(io, flag ? '1' : '0')
-        end
+        print(io, "_", nameof(params.ABI))
+        params.returnPrimal && print(io, "_rp")
+        params.shadowInit && print(io, "_si")
+        params.abiwrap && print(io, "_aw")
+        params.err_if_func_written && print(io, "_ew")
+        params.run_enzyme || print(io, "_norun")
+        # The arguments that are not overwritten between the forward and the reverse pass.
+        mask = hex_mask(map(!, params.modifiedBetween))
+        isempty(mask) || print(io, "_o", mask)
         return String(take!(io))
     end
 end
