@@ -7,6 +7,12 @@ steps:
           - "1.11"
           - "1.12"
           - "1.13"
+          - "1.14-nightly"
+      adjustments:
+        # Enzyme does not fully support Julia 1.14 yet; show progress without blocking PRs.
+        - with:
+            version: "1.14-nightly"
+          soft_fail: true
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
@@ -37,6 +43,12 @@ steps:
           - "1.11"
           - "1.12"
           - "1.13"
+          - "1.14-nightly"
+      adjustments:
+        # Enzyme does not fully support Julia 1.14 yet; show progress without blocking PRs.
+        - with:
+            version: "1.14-nightly"
+          soft_fail: true
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
