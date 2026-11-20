@@ -6267,6 +6267,37 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
     return nothing
 end
 
+function mode_namespace(mode::API.CDerivativeMode)
+    mode == API.DEM_ForwardMode && return "fwd"
+    mode == API.DEM_ReverseModePrimal && return "aug"
+    mode == API.DEM_ReverseModeGradient && return "rev"
+    return "revcombined"
+end
+
+"""
+    options_namespace(params::EnzymeCompilerParams)
+
+A string for the options of Enzyme in `params`. Two jobs with the same signature and
+different options get different strings. Each character of the string is a letter, a digit
+or `_`, so the string can be a part of a symbol name.
+"""
+function options_namespace(@nospecialize(params::EnzymeCompilerParams))
+    flags = (
+        params.run_enzyme, params.abiwrap, params.returnPrimal, params.shadowInit,
+        params.err_if_func_written, params.runtimeActivity, params.strongZero,
+    )
+    types = (params.TT, params.rt, params.expectedTapeType, params.ABI)
+    io = IOBuffer()
+    print(io, mode_namespace(params.mode), "_w", params.width, "_")
+    join(io, map(Int, flags))
+    print(io, "_m")
+    join(io, map(Int, params.modifiedBetween))
+    for T in types
+        print(io, "_", GPUCompiler.mangle_param(T, Any[], true))
+    end
+    return GPUCompiler.safe_name(String(take!(io)))
+end
+
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
@@ -7338,6 +7369,24 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
+    # The job that requested this derivative links this module into its own module, and finds
+    # the entry there by name. It does the same for each derivative that it requested. Since
+    # julia#60031, the counters in Julia's names are local to the module, so two derivatives of
+    # one function have the same names (for example the two halves of a split derivative, which
+    # are two jobs that each define the two functions). Make the function that is not the entry
+    # local to the module. Add GPUCompiler's namespace of the job (the mangled signature) and
+    # the options of Enzyme to the name of the entry.
+    # GPUCompiler 1.x only supports Julia versions where Julia's names are unique in the session.
+    @static if HAS_GPUCOMPILER_2
+        if !job.config.toplevel
+            other = use_primal ? adjointf : augmented_primalf
+            if other !== nothing
+                other.linkage = LLVM.Linkage.LinkerPrivate
+            end
+            namespace = GPUCompiler.relocation_namespace(job) * "_" * options_namespace(params)
+            LLVM.name!(entry, LLVM.name(entry) * "_" * namespace)
+        end
+    end
     # A derivative compiled on behalf of another job is linked into it here. A toplevel one is
     # linked by `_thunk`, once it has kept the symbolic bitcode. A host derivative's inserted
     # values are handed on with the module (`compile_unhooked`).
