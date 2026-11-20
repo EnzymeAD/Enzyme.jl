@@ -421,7 +421,7 @@ function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), cou
         return allunbox
     end
     # https://github.com/JuliaLang/julia/blob/170d6439445c86e640214620dad3423d2bb42337/src/codegen.cpp#L1233
-    if Base.isconcretetype(ty) && !ismutabletype(ty) && Base.datatype_pointerfree(ty)
+    if is_union_member_unboxed(ty)
         counter[] += 1
         f(ty)
         return true
@@ -429,17 +429,96 @@ function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), cou
     return false
 end
 
-# From https://github.com/JuliaLang/julia/blob/038d31463f0ef744c8308bdbe87339b9c3f0b890/src/cgutils.cpp#L3108
-function union_alloca_type(@nospecialize(UT::Type))
+# Since julia#55045 (1.14.0-DEV.165) a split union also holds members with GC pointers
+# unboxed (`!deserves_unionbox`, i.e. `deserves_stack`): a singleton, or a concrete
+# immutable type that Julia allocates inline. Their pointers are kept as roots next to
+# the union bytes. Before, only pointer-free members were held unboxed.
+const UNION_INLINE_ROOTS = VERSION >= v"1.14.0-DEV.165"
+
+@inline function is_union_member_unboxed(@nospecialize(ty))::Bool
+    @static if UNION_INLINE_ROOTS
+        ty isa DataType || return false
+        (Base.isconcretetype(ty) && !ismutabletype(ty)) || return false
+        return Base.issingletontype(ty) || Base.allocatedinline(ty)
+    else
+        return Base.isconcretetype(ty) && !ismutabletype(ty) && Base.datatype_pointerfree(ty)
+    end
+end
+
+# The number of GC pointers in the inline layout of `T` (`jl_datatype_layout(T)->npointers`).
+@inline function datatype_npointers(@nospecialize(T::DataType))::Int
+    T.layout == C_NULL && return 0
+    return Int(unsafe_load(Ptr{Base.DataTypeLayout}(T.layout)).npointers)
+end
+
+"""
+    bitsunion_field_nbytes(U) -> Int
+
+The bytes of data of a struct field of the isbits union `U`, as Julia lays it out
+(`jl_islayout_inline`). The field stores the data, then one selector byte: the
+0-based index of the component in `Base.uniontypes(U)`.
+"""
+function bitsunion_field_nbytes(@nospecialize(U::Union))::Int
+    fsz = Ref{Csize_t}(0)
+    al = Ref{Csize_t}(0)
+    n = ccall(:jl_islayout_inline, Cint, (Any, Ptr{Csize_t}, Ptr{Csize_t}), U, fsz, al)
+    @assert n != 0
+    return Int(fsz[])
+end
+
+"""
+    union_alloca_info(UT) -> (nbytes, inline_roots)
+
+The bytes and the GC roots that a split union `UT` needs on the stack, as
+`union_alloca_type` in Julia's `cgutils.cpp` computes them. A member that only
+consists of GC pointers lives entirely in the roots, and adds no bytes.
+"""
+struct CollectUnionMembers
+    members::Vector{Any}
+end
+(c::CollectUnionMembers)(@nospecialize(T)) = (push!(c.members, T); nothing)
+
+function union_alloca_info(@nospecialize(UT::Type))::Tuple{Int, Int}
     nbytes = 0
-    function inner(@nospecialize(jlrettype::Type))
-        return if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
-            nbytes = max(nbytes, sizeof(jlrettype))
+    roots = 0
+    members = CollectUnionMembers(Any[])
+    for_each_uniontype_small(members, UT)
+    for jlrettype in members.members
+        if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
+            nb1 = sizeof(jlrettype)
+            @static if UNION_INLINE_ROOTS
+                n_roots = datatype_npointers(jlrettype)
+                if nb1 != n_roots * sizeof(Ptr{Cvoid})
+                    nbytes = max(nbytes, nb1)
+                end
+                roots = max(roots, n_roots)
+            else
+                nbytes = max(nbytes, nb1)
+            end
         end
     end
-    for_each_uniontype_small(inner, UT)
+    return nbytes, roots
+end
+
+# From https://github.com/JuliaLang/julia/blob/038d31463f0ef744c8308bdbe87339b9c3f0b890/src/cgutils.cpp#L3108
+# The size of the union buffer of a `Union` return (`union_bytes` in `get_specsig_function`).
+# Since julia#55045, a union whose members only hold GC pointers still gets a buffer, of
+# one pointer per root.
+function union_alloca_type(@nospecialize(UT::Type))
+    nbytes, roots = union_alloca_info(UT)
+    if nbytes == 0 && roots > 0
+        nbytes = roots * sizeof(Ptr{Cvoid})
+    end
     return nbytes
 end
+
+"""
+    union_return_roots(UT) -> Int
+
+The number of return roots of a split `Union` return: the most GC pointers any
+member that is held unboxed has (julia#55045). Always 0 before Julia 1.14.
+"""
+union_return_roots(@nospecialize(UT::Type))::Int = union_alloca_info(UT)[2]
 
 
 # From https://github.com/JuliaLang/julia/blob/e6bf81f39a202eedc7bd4f310c1ab60b5b86c251/src/codegen.cpp#L6447
@@ -498,16 +577,18 @@ function get_return_info(
             isa(jlrettype, DataType)
         rt = Nothing
     elseif jlrettype isa Union
-        nbytes = 0
-        allunbox = for_each_uniontype_small(jlrettype) do jlrettype
-            if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
-                nbytes = max(nbytes, sizeof(jlrettype))
-            end
-        end
+        allunbox = for_each_uniontype_small(Returns(nothing), jlrettype)
+        nbytes = union_alloca_type(jlrettype)
         if nbytes != 0
             rt = NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Any, UInt8}}
             # Pointer to?, Ptr{NTuple{UInt8, allunbox}
             sret = Ptr{jlrettype}
+            # Since julia#55045 the roots of a member that holds GC pointers are
+            # returned through a return-roots parameter after the union buffer.
+            roots = union_return_roots(jlrettype)
+            if roots != 0
+                returnRoots = Ptr{AnyArray(roots)}
+            end
         elseif allunbox
             rt = UInt8
         else

@@ -5906,15 +5906,30 @@ function lower_convention(
                         nobj = if sretPtr !== nothing
                             obj = emit_allocobj!(builder, jlrettype, "boxunion")
                             llty = convert(LLVMType, jlrettype)
-                            ld = load!(
-                                builder,
-                                llty,
-                                bitcast!(
+                            nroots = UNION_INLINE_ROOTS ? datatype_npointers(jlrettype) : 0
+                            ld = if nroots != 0
+                                # julia#55045: a member with GC pointers is split, its data in
+                                # the union buffer and its pointers in the return roots.
+                                @assert retRootPtr !== nothing
+                                move_sret_tofrom_roots!(
                                     builder,
+                                    llty,
                                     sretPtr,
-                                    LLVM.PointerType(llty, sretPtr.value_type.addrspace),
-                                ),
-                            )
+                                    convert(LLVMType, AnyArray(nroots)),
+                                    retRootPtr,
+                                    RootAndSRetPointerToValue,
+                                )
+                            else
+                                load!(
+                                    builder,
+                                    llty,
+                                    bitcast!(
+                                        builder,
+                                        sretPtr,
+                                        LLVM.PointerType(llty, sretPtr.value_type.addrspace),
+                                    ),
+                                )
+                            end
                             store!(
                                 builder,
                                 ld,
@@ -6355,8 +6370,10 @@ const DumpPreOpt = Ref(false)
     link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 
 Link `newmod` into `mod` like `LLVM.link!(mod, newmod)`, but set `LLVMInternalLinkage` on
-any function defined in both modules before linking. This allows LLVM's linker to natively
-internalize and resolve duplicate definitions without string comparisons or linker collisions.
+any function or global variable defined in both modules before linking. This allows LLVM's
+linker to natively internalize and resolve duplicate definitions without string comparisons
+or linker collisions. A duplicate global is, for example, the `ccalllib_*` library handle
+cache that Julia's codegen defines in every module that has a `ccall` into that library.
 """
 function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
     modfns = mod.functions
@@ -6369,6 +6386,14 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
         isdeclaration(modfns[fname]) && continue
         f.linkage = LLVM.Linkage.Internal
         has_collided = true
+    end
+    modgvs = mod.globals
+    for gv in collect(newmod.globals)
+        isdeclaration(gv) && continue
+        gname = LLVM.name(gv)
+        haskey(modgvs, gname) || continue
+        isdeclaration(modgvs[gname]) && continue
+        gv.linkage = LLVM.Linkage.Internal
     end
     LLVM.link!(mod, newmod)
     if has_collided

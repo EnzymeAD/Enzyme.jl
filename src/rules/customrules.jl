@@ -1105,20 +1105,32 @@ function enzyme_custom_setup_ret(
                 activep = roots_activep
                 needsPrimal |= activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
                 needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
+            elseif roots_activep == API.DFT_CONSTANT && is_sret_union(RealRt)
+                # julia#55045: a split union keeps the data of a member in the buffer
+                # and its GC pointers in the roots, and either one can be inactive, as
+                # for `Union{Nothing, Tuple{Float64, Vector{Int}}}`. The inactive one
+                # gets a scratch shadow (see `union_return_buffers`).
+                roots_activep = activep
             end
             if roots_activep != activep
                 if B !== nothing
                     bt = GPUCompiler.backtrace(orig)
-                    msg_info = """
-                    Custom rule for method return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).
-                      - Non-rooted types: $(tuple_non_rooted_types(RealRt))
-                      - Rooted types: $(tuple_rooted_types(RealRt))
-                    """
+                    msg_info = "Custom rule for method return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).\n"
+                    if RealRt isa DataType
+                        msg_info *= """
+                          - Non-rooted types: $(tuple_non_rooted_types(RealRt))
+                          - Rooted types: $(tuple_rooted_types(RealRt))
+                        """
+                    end
                     msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                     emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
                     return false
                 else
-                    throw("Returned roots_activep ($roots_activep) != activep ($activep) arg.typ=$(RealRt) equivalent_rooted_type=$(equivalent_rooted_type(RealRt)) non_rooted_types=$(non_rooted_types(RealRt))")
+                    msg = "Returned roots_activep ($roots_activep) != activep ($activep) arg.typ=$(RealRt)"
+                    if RealRt isa DataType
+                        msg *= " equivalent_rooted_type=$(equivalent_rooted_type(RealRt)) non_rooted_types=$(non_rooted_types(RealRt))"
+                    end
+                    throw(msg)
                 end
             end
             roots_needsPrimal = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_CONSTANT
@@ -1166,6 +1178,280 @@ end
 
 function custom_rule_method_error(world::UInt, @nospecialize(fn), @nospecialize(args::Vararg))
     throw(MethodError(fn, (args...,), world))
+end
+
+"""
+    union_return_buffers(gutils, orig, B, primal) -> (buffer, roots)
+
+Return the union buffer and the return roots (or `nothing`) of the call `orig`,
+which returns a split union: the new primal ones if `primal`, else the shadow
+ones. A constant shadow buffer (or roots) is replaced by a scratch one for each
+batch lane, as a value of the shadow type of the pointer.
+"""
+function union_return_buffers(gutils::GradientUtils, orig::LLVM.CallInst, B::LLVM.IRBuilder, primal::Bool)
+    swiftself = has_swiftself(orig.called_operand)
+    _, RealRt = enzyme_custom_extract_mi(orig)
+    _, _, roots = get_return_info(RealRt)
+    width = get_width(gutils)
+    ops = LLVM.Value[orig.operands[1 + swiftself]]
+    if roots !== nothing
+        push!(ops, orig.operands[2 + swiftself])
+    end
+    res = LLVM.Value[]
+    for op in ops
+        if primal
+            push!(res, new_from_original(gutils, op))
+        elseif is_constant_value(gutils, op)
+            ty = op === ops[1] ? LLVM.ArrayType(LLVM.Int8Type(), union_alloca_type(RealRt)) : convert(LLVMType, eltype(roots))
+            alloctx = LLVM.IRBuilder()
+            position!(alloctx, LLVM.at_end(LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils))))
+            scratch = alloca!(alloctx, ty)
+            if width != 1
+                lanes = LLVM.UndefValue(LLVM.ArrayType(scratch.value_type, Int(width)))
+                lanes = insert_value!(B, lanes, scratch, 0)
+                for idx in 2:width
+                    lanes = insert_value!(B, lanes, alloca!(alloctx, ty), idx - 1)
+                end
+                scratch = lanes
+            end
+            push!(res, scratch)
+            dispose(alloctx)
+        else
+            push!(res, invert_pointer(gutils, op, B))
+        end
+    end
+    return res[1], (roots === nothing ? nothing : res[2])
+end
+
+"""
+    boxed_union_return(RealRt, orig) -> Bool
+
+Return `true` if `orig` returns the split union `RealRt` and a rule result holds
+it boxed, as for a `Union` field that is not an isbits union. (Since Julia 1.14,
+julia#55045, a split union can also hold members with GC pointers.)
+"""
+function boxed_union_return(@nospecialize(RealRt::Type), orig::LLVM.CallInst)::Bool
+    is_sret_union(RealRt) || return false
+    Base.isbitsunion(RealRt) && return false
+    return orig.value_type isa LLVM.StructType
+end
+
+"""
+    inline_union_return(RealRt, orig) -> Bool
+
+Return `true` if `orig` returns the split union `RealRt` and a struct field of
+`RealRt`, as in a `Duplicated{RealRt}` rule result, stores it inline: `RealRt`
+is an isbits union. Use [`inline_union_value!`](@ref) to read such a field.
+"""
+function inline_union_return(@nospecialize(RealRt::Type), orig::LLVM.CallInst)::Bool
+    is_sret_union(RealRt) || return false
+    Base.isbitsunion(RealRt) || return false
+    return orig.value_type isa LLVM.StructType
+end
+
+"""
+    inline_union_value!(B, uty, src, offset, buffer, UT) -> LLVM.Value
+
+Copy a struct field of the isbits union `UT`, stored at byte `offset` of `src`,
+into the union buffer `buffer` of a call that returns `UT`. Return the `{ptr, i8}`
+value of type `uty` that returns it unboxed: field 0 is null, and the selector is
+the 1-based index of the component, the 0-based selector of the field plus one.
+"""
+function inline_union_value!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, src::LLVM.Value, offset::Integer, buffer::LLVM.Value, @nospecialize(UT::Union))::LLVM.Value
+    T_int8 = LLVM.Int8Type()
+    T_int64 = LLVM.Int64Type()
+    nbytes = bitsunion_field_nbytes(UT)
+    field = gep!(B, T_int8, bitcast!(B, src, LLVM.PointerType(T_int8, LLVM.addrspace(src.value_type))), LLVM.Value[LLVM.ConstantInt(T_int64, offset)])
+    memcpy!(B, buffer, 0, field, 0, LLVM.ConstantInt(T_int64, nbytes))
+    sel = load!(B, T_int8, gep!(B, T_int8, field, LLVM.Value[LLVM.ConstantInt(T_int64, nbytes)]))
+    v = insert_value!(B, LLVM.UndefValue(uty), LLVM.null(LLVM.elements(uty)[1]), 0)
+    return insert_value!(B, v, add!(B, sel, LLVM.ConstantInt(T_int8, 1)), 1)
+end
+
+"""
+    boxed_union_value!(B, uty, boxed, roots, UT) -> LLVM.Value
+
+Return the `{ptr, i8}` value of type `uty` that returns `boxed`, a value of the
+split union `UT`, boxed: field 0 is `boxed`, and the selector is the index of
+its type in `UT` with the box bit `0x80` set. As Julia 1.14 does (julia#55045),
+store the GC pointers of `boxed` in the return roots `roots` too: a caller reads
+the pointers of a member from the roots even if the member is boxed. `roots` is
+`nothing` if the call has no return roots.
+
+The type test is in a separate internal function, because the caller must not
+add basic blocks to the function that Enzyme differentiates.
+"""
+function boxed_union_value!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, boxed::LLVM.Value, roots::Union{Nothing, LLVM.Value}, @nospecialize(UT::Type))::LLVM.Value
+    mod = LLVM.parent(LLVM.parent(B.insert_block))
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_int8 = LLVM.Int8Type()
+
+    params = roots === nothing ? LLVMType[T_prjlvalue] : LLVMType[T_prjlvalue, roots.value_type]
+    fty = LLVM.FunctionType(uty, params)
+    func = LLVM.Function(mod, "enzyme.boxed_union_return", fty)
+    func.linkage = LLVM.Linkage.Internal
+    push!(func.function_attributes, EnumAttribute("alwaysinline"))
+
+    members = CollectUnionMembers(Any[])
+    for_each_uniontype_small(members, UT)
+
+    @dispose B2 = IRBuilder() begin
+        obj = func.parameters[1]
+        rootsp = roots === nothing ? nothing : func.parameters[2]
+        entry = BasicBlock(func, "entry")
+        position!(B2, LLVM.at_end(entry))
+        tag = emit_jltypeof!(B2, obj, nothing)
+        # The selector of a member is its 1-based position in `for_each_uniontype_small` order.
+        for (k, T) in enumerate(members.members)
+            bb = BasicBlock(func, "member")
+            next = BasicBlock(func, "next")
+            br!(B2, icmp!(B2, LLVM.IntPredicate.EQ, tag, unsafe_to_llvm(B2, T)), bb, next)
+            position!(B2, LLVM.at_end(bb))
+            nroots = Base.issingletontype(T) ? 0 : datatype_npointers(T)
+            if nroots != 0
+                @assert rootsp !== nothing
+                llty = convert(LLVMType, T)
+                val = load!(B2, llty, bitcast!(B2, obj, LLVM.PointerType(llty, Tracked)))
+                move_sret_tofrom_roots!(B2, llty, val, convert(LLVMType, AnyArray(nroots)), rootsp, SRetValueToRootPointer)
+            end
+            v = insert_value!(B2, LLVM.UndefValue(uty), obj, 0)
+            ret!(B2, insert_value!(B2, v, LLVM.ConstantInt(T_int8, 0x80 | k), 1))
+            position!(B2, LLVM.at_end(next))
+        end
+        v = insert_value!(B2, LLVM.UndefValue(uty), obj, 0)
+        ret!(B2, insert_value!(B2, v, LLVM.ConstantInt(T_int8, 0x80), 1))
+    end
+
+    return call!(B, fty, func, roots === nothing ? LLVM.Value[boxed] : LLVM.Value[boxed, roots])
+end
+
+"""
+    boxed_union_shadow!(B, uty, dval, droots, UT, width) -> LLVM.Value
+
+Return the shadow of a split-union return of type `uty` from `dval`, the boxed
+shadow (or an `NTuple` of `width` of them), with [`boxed_union_value!`](@ref).
+`droots` holds the shadow return roots, or is `nothing` if there are none.
+
+An `NTuple` of such unions is not a concrete type, so a rule returns it (or a
+`BatchDuplicated` holds it) as a boxed tuple. Each shadow is then read from the
+tuple, boxed, at run time.
+"""
+function boxed_union_shadow!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, dval::LLVM.Value, droots::Union{Nothing, LLVM.Value}, @nospecialize(UT::Type), width::Integer)::LLVM.Value
+    width == 1 && return boxed_union_value!(B, uty, dval, droots, UT)
+    boxed_tuple = dval.value_type isa LLVM.PointerType
+    shadowV = LLVM.UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, uty)))
+    for idx in 1:width
+        dlane = boxed_tuple ? emit_nthfield!(B, dval, Int(idx - 1)) : extract_value!(B, dval, idx - 1)
+        lane = boxed_union_value!(B, uty, dlane, droots === nothing ? nothing : extract_value!(B, droots, idx - 1), UT)
+        shadowV = insert_value!(B, shadowV, lane, idx - 1)
+    end
+    return shadowV
+end
+
+"""
+    unboxed_union_value!(B, uty, boxed, buffer, UT) -> LLVM.Value
+
+Copy `boxed`, a boxed value of the isbits union `UT`, into the union buffer
+`buffer` of a call that returns `UT`. Return the `{ptr, i8}` value of type `uty`
+that returns it unboxed: field 0 is null, and the selector is the index of its
+type in `UT`, without the box bit.
+
+The type test is in a separate internal function, because the caller must not
+add basic blocks to the function that Enzyme differentiates.
+"""
+function unboxed_union_value!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, boxed::LLVM.Value, buffer::LLVM.Value, @nospecialize(UT::Union))::LLVM.Value
+    mod = LLVM.parent(LLVM.parent(B.insert_block))
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_int8 = LLVM.Int8Type()
+    T_int64 = LLVM.Int64Type()
+
+    fty = LLVM.FunctionType(uty, LLVMType[T_prjlvalue, buffer.value_type])
+    func = LLVM.Function(mod, "enzyme.unboxed_union_return", fty)
+    func.linkage = LLVM.Linkage.Internal
+    push!(func.function_attributes, EnumAttribute("alwaysinline"))
+
+    members = CollectUnionMembers(Any[])
+    for_each_uniontype_small(members, UT)
+
+    @dispose B2 = IRBuilder() begin
+        obj, bufp = func.parameters
+        entry = BasicBlock(func, "entry")
+        position!(B2, LLVM.at_end(entry))
+        tag = emit_jltypeof!(B2, obj, nothing)
+        unboxed = insert_value!(B2, LLVM.UndefValue(uty), LLVM.null(T_prjlvalue), 0)
+        # The selector of a member is its 1-based position in `for_each_uniontype_small` order.
+        for (k, T) in enumerate(members.members)
+            bb = BasicBlock(func, "member")
+            next = BasicBlock(func, "next")
+            br!(B2, icmp!(B2, LLVM.IntPredicate.EQ, tag, unsafe_to_llvm(B2, T)), bb, next)
+            position!(B2, LLVM.at_end(bb))
+            if sizeof(T) != 0
+                memcpy!(B2, bufp, 0, obj, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
+            end
+            ret!(B2, insert_value!(B2, unboxed, LLVM.ConstantInt(T_int8, k), 1))
+            position!(B2, LLVM.at_end(next))
+        end
+        v = insert_value!(B2, LLVM.UndefValue(uty), obj, 0)
+        ret!(B2, insert_value!(B2, v, LLVM.ConstantInt(T_int8, 0x80), 1))
+    end
+
+    return call!(B, fty, func, LLVM.Value[boxed, buffer])
+end
+
+"""
+    inline_union_shadow!(B, uty, dtup, dbuf, UT, width) -> LLVM.Value
+
+Return the `[width x uty]` shadow of a call that returns the isbits union `UT`
+from `dtup`, the boxed `NTuple` of shadows of a batched rule. As the primal of
+such a call is unboxed, copy each shadow into its lane of the shadow buffers
+`dbuf` with [`unboxed_union_value!`](@ref).
+"""
+function inline_union_shadow!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, dtup::LLVM.Value, dbuf::LLVM.Value, @nospecialize(UT::Union), width::Integer)::LLVM.Value
+    shadowV = LLVM.UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, uty)))
+    for idx in 1:width
+        dlane = emit_nthfield!(B, dtup, Int(idx - 1))
+        lane = unboxed_union_value!(B, uty, dlane, extract_value!(B, dbuf, idx - 1), UT)
+        shadowV = insert_value!(B, shadowV, lane, idx - 1)
+    end
+    return shadowV
+end
+
+"""
+    only_tracked_field!(B, val) -> LLVM.Value
+
+Return the only element of the struct value `val` that is a GC pointer.
+"""
+function only_tracked_field!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
+    found = nothing
+    for (idx, ty) in enumerate(LLVM.elements(val.value_type))
+        if ty isa LLVM.PointerType && LLVM.addrspace(ty) == Tracked
+            @assert found === nothing
+            found = idx - 1
+        end
+    end
+    @assert found !== nothing
+    return extract_value!(B, val, found)
+end
+
+"""
+    batched_shadow!(B, dval, uty, width) -> LLVM.Value
+
+Return the shadows `dval` of a batched rule as the `[width x uty]` shadow of a
+call that returns `uty`. If the element type of the shadows is not concrete, the
+`NTuple` of shadows is not either, and the rule returns it (or a `BatchDuplicated`
+holds it) as a boxed tuple: each shadow is then read from it, boxed, at run time.
+"""
+function batched_shadow!(B::LLVM.IRBuilder, dval::LLVM.Value, uty::LLVM.LLVMType, width::Integer)::LLVM.Value
+    width == 1 && return dval
+    sty = LLVM.LLVMType(API.EnzymeGetShadowType(width, uty))
+    (dval.value_type == sty || !(dval.value_type isa LLVM.PointerType)) && return dval
+    shadowV = LLVM.UndefValue(sty)
+    for idx in 1:width
+        shadowV = insert_value!(B, shadowV, emit_nthfield!(B, dval, Int(idx - 1)), idx - 1)
+    end
+    return shadowV
 end
 
 @register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
@@ -1216,9 +1502,31 @@ end
     if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
-    _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    fwd_miRT = enzyme_custom_extract_mi(llvmf)[2]
+    _, sret, returnRoots0 = get_return_info(fwd_miRT)
     returnRoots = returnRoots0
-    if sret !== nothing
+    rule_sret_union = sret !== nothing && is_sret_union(fwd_miRT)
+    if rule_sret_union
+        # The rule returns the split union `RealRt` itself, the primal or the
+        # shadow. Let it write straight into the union buffer and roots of the
+        # original call or of its shadow. In batch mode only the primal is a
+        # single union: the shadows are an `NTuple`, which holds them boxed.
+        if fwd_RT != RealRt || (width != 1 && !(RT <: Const))
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+            emit_error(B, orig, (msg2, fmi, world), ForwardRuleReturnError{C, RT, fwd_RT})
+            return false
+        end
+        sret, returnRoots = if RT <: Const
+            union_return_buffers(gutils, orig, B, true)
+        else
+            union_return_buffers(gutils, orig, B, false)
+        end
+        pushfirst!(args, sret)
+        if returnRoots !== nothing
+            insert!(args, 2, returnRoots)
+        end
+    elseif sret !== nothing
         sret_lty = convert(LLVMType, eltype(sret))
         esret = eltype(sret)
 
@@ -1281,7 +1589,12 @@ end
         return false
     end
 
-    if sret !== nothing
+    if rule_sret_union
+        # `res` is the `{ptr, i8}` union return, its data already in place.
+        if returnRoots !== nothing
+            push!(res.argument_attributes[2], StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+        end
+    elseif sret !== nothing
         sty = sret_ty(llvmf, 1)
         attr = TypeAttribute(:sret, sty)
         push!(res.argument_attributes[1], attr)
@@ -1316,7 +1629,9 @@ end
         if needsPrimal
             @assert RealRt == fwd_RT
             _, prim_sret, prim_roots = get_return_info(RealRt)
-            if prim_sret !== nothing
+            if rule_sret_union
+                normalV = res.ref
+            elseif prim_sret !== nothing
                 val = new_from_original(gutils, orig.operands[1 + orig_swiftself])
 
                 if prim_roots !== nothing && VERSION >= v"1.12"
@@ -1342,7 +1657,17 @@ end
             end
             @assert ST == fwd_RT
             _, prim_sret, prim_roots = get_return_info(RealRt)
-            if prim_sret !== nothing
+            if rule_sret_union
+                shadowV = res.ref
+            elseif boxed_union_return(RealRt, orig)
+                # Each shadow is boxed in the `NTuple`.
+                _, droots = union_return_buffers(gutils, orig, B, false)
+                shadowV = boxed_union_shadow!(B, orig.value_type, res, droots, RealRt, width).ref
+            elseif inline_union_return(RealRt, orig)
+                # Each shadow is boxed in the `NTuple`, and unboxed like the primal.
+                dbuf, _ = union_return_buffers(gutils, orig, B, false)
+                shadowV = inline_union_shadow!(B, orig.value_type, res, dbuf, RealRt, width).ref
+            elseif prim_sret !== nothing
                 dval_ptr = if !is_constant_value(gutils, orig.operands[1 + orig_swiftself])
                     @assert prim_roots !== nothing && VERSION >= v"1.12"
                     @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
@@ -1376,7 +1701,7 @@ end
                     end
                 end
             else
-                shadowV = res.ref
+                shadowV = batched_shadow!(B, res, orig.value_type, width).ref
             end
         else
             ST = if width == 1
@@ -1387,7 +1712,32 @@ end
             @assert ST == fwd_RT
 
             _, prim_sret, prim_roots = get_return_info(RealRt)
-            if prim_sret !== nothing
+            if boxed_union_return(RealRt, orig)
+                _, proots = union_return_buffers(gutils, orig, B, true)
+                _, droots = union_return_buffers(gutils, orig, B, false)
+                normalV = boxed_union_value!(B, orig.value_type, extract_value!(B, res, 0), proots, RealRt).ref
+                shadowV = boxed_union_shadow!(B, orig.value_type, extract_value!(B, res, 1), droots, RealRt, width).ref
+            elseif inline_union_return(RealRt, orig)
+                # The primal, and for width 1 the shadow, are isbits-union fields of
+                # the rule result, stored inline. Read them from its memory.
+                rule_mem = if sret !== nothing
+                    sret
+                else
+                    mem = alloca!(alloctx, res.value_type)
+                    store!(B, res, mem)
+                    mem
+                end
+                pbuf, _ = union_return_buffers(gutils, orig, B, true)
+                normalV = inline_union_value!(B, orig.value_type, rule_mem, fieldoffset(fwd_RT, 1), pbuf, RealRt).ref
+                dbuf, _ = union_return_buffers(gutils, orig, B, false)
+                if width == 1
+                    shadowV = inline_union_value!(B, orig.value_type, rule_mem, fieldoffset(fwd_RT, 2), dbuf, RealRt).ref
+                else
+                    # The `NTuple` of shadows is not concrete: the rule result holds
+                    # it as its only GC pointer, and the tuple holds each shadow boxed.
+                    shadowV = inline_union_shadow!(B, orig.value_type, only_tracked_field!(B, res), dbuf, RealRt, width).ref
+                end
+            elseif prim_sret !== nothing
                 val = new_from_original(gutils, orig.operands[1 + orig_swiftself])
 
                 res0 = extract_value!(B, res, 0)
@@ -1434,7 +1784,7 @@ end
                 end
             else
                 normalV = extract_value!(B, res, 0).ref
-                shadowV = extract_value!(B, res, 1).ref
+                shadowV = batched_shadow!(B, extract_value!(B, res, 1), orig.value_type, width).ref
             end
         end
     end
@@ -1698,6 +2048,160 @@ function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM
         result = select!(B, is_k, boxed[k], result)
     end
     return result
+end
+
+"""
+    sret_union_tape_inline(T) -> Bool
+
+Return `true` if the tape type `T` of a member of a split `AugmentedReturn`
+union is stored inline in the member. Otherwise the tape field is a pointer to
+the boxed tape (julia#55045 also unboxes such members since Julia 1.14).
+"""
+sret_union_tape_inline(@nospecialize(T)) = T isa DataType && Base.isconcretetype(T) && Base.allocatedinline(T)
+
+"""
+    sret_union_tape_bitsunion(T) -> Bool
+
+Return `true` if the tape type `T` of a member of a split `AugmentedReturn` union
+is an isbits union. The member stores such a tape inline: the data of one of its
+components, then a selector byte (see [`bitsunion_field_nbytes`](@ref)).
+"""
+sret_union_tape_bitsunion(@nospecialize(T)) = T isa Union && Base.isbitsunion(T)
+
+"""
+    bitsunion_tape_select!(B, sret, offset, U) -> (jlty, size, singleton, singleton_val)
+
+Read the selector byte of a tape of the isbits union `U` that is stored at byte
+`offset` of the union buffer `sret`. Return, as LLVM values, the component of `U`
+that the selector names: its type, its size, if it is a singleton, and its
+instance (`nothing` if it is not a singleton).
+"""
+function bitsunion_tape_select!(B::LLVM.IRBuilder, sret::LLVM.Value, offset::Int, @nospecialize(U::Union))
+    T_int1 = LLVM.Int1Type()
+    T_int8 = LLVM.Int8Type()
+    T_int64 = LLVM.Int64Type()
+    selp = gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[LLVM.ConstantInt(T_int64, offset + bitsunion_field_nbytes(U))])
+    # If the union return holds a different member, these bytes are not a selector,
+    # and the caller discards the result.
+    sel = freeze!(B, load!(B, T_int8, selp))
+    jlty = nothing
+    size = nothing
+    singleton = nothing
+    singleton_val = nothing
+    for (j, S) in enumerate(Base.uniontypes(U))
+        is_singleton = Base.issingletontype(S)
+        S_jlty = unsafe_to_llvm(B, S)
+        S_size = LLVM.ConstantInt(sizeof(S))
+        S_singleton = LLVM.ConstantInt(T_int1, is_singleton)
+        S_singleton_val = unsafe_to_llvm(B, is_singleton ? S.instance : nothing)
+        if jlty === nothing
+            jlty, size, singleton, singleton_val = S_jlty, S_size, S_singleton, S_singleton_val
+        else
+            is_j = icmp!(B, LLVM.IntPredicate.EQ, sel, LLVM.ConstantInt(T_int8, j - 1))
+            jlty = select!(B, is_j, S_jlty, jlty)
+            size = select!(B, is_j, S_size, size)
+            singleton = select!(B, is_j, S_singleton, singleton)
+            singleton_val = select!(B, is_j, S_singleton_val, singleton_val)
+        end
+    end
+    return jlty, size, singleton, singleton_val
+end
+
+"""
+    fill_sret_union_tape!(B, tape, sret, roots, idxv, aug_UT) -> LLVM.Value
+
+Since Julia 1.14 (julia#55045) a member of the split union `aug_UT` (a union of
+`AugmentedReturn`s) with GC pointers keeps its data in the union buffer `sret`
+and its pointers in the return roots `roots`. Return the tape of the member that
+the selector `idxv` names:
+
+- A tape stored inline is copied into `tape`, a new object of the tape type, and
+  `tape` is returned.
+- A tape stored as a pointer is loaded from `roots` and returned.
+- For a boxed member (selector bit `0x80`) or a singleton tape, `tape` is
+  returned unchanged.
+
+The selection is in a separate internal function, because the caller must not
+add basic blocks to the function that Enzyme differentiates.
+"""
+function fill_sret_union_tape!(B::LLVM.IRBuilder, tape::LLVM.Value, sret::LLVM.Value, roots::LLVM.Value, idxv::LLVM.Value, @nospecialize(aug_UT::Type))::LLVM.Value
+    mod = LLVM.parent(LLVM.parent(B.insert_block))
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_int8 = LLVM.Int8Type()
+    T_int64 = LLVM.Int64Type()
+
+    fty = LLVM.FunctionType(T_prjlvalue, LLVMType[T_prjlvalue, sret.value_type, roots.value_type, idxv.value_type])
+    func = LLVM.Function(mod, "enzyme.sret_union_tape", fty)
+    func.linkage = LLVM.Linkage.Internal
+    push!(func.function_attributes, EnumAttribute("alwaysinline"))
+
+    members = CollectUnionMembers(Any[])
+    for_each_uniontype_small(members, aug_UT)
+
+    @dispose B2 = IRBuilder() begin
+        entry = BasicBlock(func, "entry")
+        def = BasicBlock(func, "default")
+        obj, sretp, rootsp, sel = func.parameters
+
+        position!(B2, LLVM.at_end(def))
+        ret!(B2, obj)
+
+        position!(B2, LLVM.at_end(entry))
+        sw = switch!(B2, sel, def)
+
+        # The selector of a member is its 1-based position in `for_each_uniontype_small` order.
+        for (k, M) in enumerate(members.members)
+            T = EnzymeRules.tape_type(M)
+            Base.issingletontype(T) && continue
+            if sret_union_tape_bitsunion(T)
+                # The tape has no GC pointers: copy the data of the component that
+                # its selector names. A singleton copies no bytes.
+                bb = BasicBlock(func, "member")
+                push!(sw.cases, (LLVM.ConstantInt(sel.value_type, k), bb))
+                position!(B2, LLVM.at_end(bb))
+                src = gep!(B2, T_int8, sretp, LLVM.Value[LLVM.ConstantInt(T_int64, fieldoffset(M, 3))])
+                _, size, _, _ = bitsunion_tape_select!(B2, sretp, Int(fieldoffset(M, 3)), T)
+                memcpy!(B2, bitcast!(B2, obj, LLVM.PointerType(T_int8, Tracked)), 0, src, 0, size)
+                ret!(B2, obj)
+                continue
+            end
+            inline = sret_union_tape_inline(T)
+            tape_roots = inline ? datatype_npointers(T) : 1
+            # The tape is the last field, so its roots are the last roots of the member.
+            r0 = datatype_npointers(M) - tape_roots
+
+            bb = BasicBlock(func, "member")
+            push!(sw.cases, (LLVM.ConstantInt(sel.value_type, k), bb))
+            position!(B2, LLVM.at_end(bb))
+
+            src = gep!(B2, T_int8, sretp, LLVM.Value[LLVM.ConstantInt(T_int64, fieldoffset(M, 3))])
+            rsrc = inbounds_gep!(B2, T_prjlvalue, rootsp, LLVM.Value[LLVM.ConstantInt(T_int64, r0)])
+            if !inline
+                ret!(B2, load!(B2, T_prjlvalue, rsrc))
+                continue
+            end
+
+            if tape_roots == 0
+                memcpy!(B2, bitcast!(B2, obj, LLVM.PointerType(T_int8, Tracked)), 0, src, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
+            else
+                llty = convert(LLVMType, T)
+                val = move_sret_tofrom_roots!(
+                    B2,
+                    llty,
+                    bitcast!(B2, src, LLVM.PointerType(llty)),
+                    convert(LLVMType, AnyArray(tape_roots)),
+                    rsrc,
+                    RootAndSRetPointerToValue,
+                )
+                store!(B2, val, bitcast!(B2, obj, LLVM.PointerType(llty, Tracked)))
+                emit_writebarrier!(B2, get_julia_inner_types(B2, obj, val))
+            end
+            ret!(B2, obj)
+        end
+    end
+
+    return call!(B, fty, func, LLVM.Value[tape, sret, roots, idxv])
 end
 
 function nthfield_if_byref!(B, isboxed, sret_union_type, res)
@@ -1997,7 +2501,8 @@ function enzyme_custom_common_rev(
 
     if sret_union
         @assert sret !== nothing
-        @assert returnRoots === nothing
+        # Since julia#55045 a split union also has return roots.
+        @assert UNION_INLINE_ROOTS || returnRoots === nothing
     end
 
     if !forward
@@ -2363,28 +2868,38 @@ function enzyme_custom_common_rev(
 
         function inner(@nospecialize(aug_RT::Type))
             jlrettype = EnzymeRules.tape_type(aug_RT)
-            if cur_size == nothing
-                cur_size = sizeof(jlrettype)
-            elseif cur_size != sizeof(jlrettype)
-                same_size = false
+            if sret_union_tape_bitsunion(jlrettype)
+                # The tape is the component of the isbits union that its selector names.
+                m_ty, m_size, m_singleton, m_singleton_val =
+                    bitsunion_tape_select!(B, sret, Int(fieldoffset(aug_RT, 3)), jlrettype)
+                any_singleton |= any(Base.issingletontype, Base.uniontypes(jlrettype))
+            else
+                if !sret_union_tape_inline(jlrettype)
+                    # julia#55045: the member holds a pointer to the boxed tape, which
+                    # `fill_sret_union_tape!` returns. Allocate a placeholder.
+                    jlrettype = UInt8
+                end
+                singleton = Base.issingletontype(jlrettype)
+                any_singleton |= singleton
+                m_ty = unsafe_to_llvm(B, jlrettype)
+                m_size = LLVM.ConstantInt(sizeof(jlrettype))
+                m_singleton = LLVM.ConstantInt(T_int1, singleton)
+                m_singleton_val = unsafe_to_llvm(B, singleton ? jlrettype.instance : nothing)
             end
-            singleton = Base.issingletontype(jlrettype)
-            any_singleton |= singleton
-            singleton_val = unsafe_to_llvm(B, singleton ? jlrettype.instance : nothing)
 
             if cur === nothing
-                cur = unsafe_to_llvm(B, jlrettype)
-                cur_size = LLVM.ConstantInt(sizeof(jlrettype))
+                cur = m_ty
+                cur_size = m_size
                 cur_offset = LLVM.ConstantInt(fieldoffset(aug_RT, 3))
-                cur_singleton = LLVM.ConstantInt(T_int1, singleton)
-                cur_singleton_val = singleton_val
+                cur_singleton = m_singleton
+                cur_singleton_val = m_singleton_val
             else
                 cmpv = icmp!(B, LLVM.IntPredicate.EQ, idxv, LLVM.ConstantInt(idxv.value_type, counter))
-                cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
-                cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
+                cur = select!(B, cmpv, m_ty, cur)
+                cur_size = select!(B, cmpv, m_size, cur_size)
                 cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
-                cur_singleton = select!(B, cmpv, LLVM.ConstantInt(T_int1, singleton), cur_singleton)
-                cur_singleton_val = select!(B, cmpv, singleton_val, cur_singleton_val)
+                cur_singleton = select!(B, cmpv, m_singleton, cur_singleton)
+                cur_singleton_val = select!(B, cmpv, m_singleton_val, cur_singleton_val)
             end
 
             counter += 1
@@ -2398,12 +2913,20 @@ function enzyme_custom_common_rev(
 
         sret_union_tape = emit_allocobj!(B, cur, cur_size, false)
         T_int8 = LLVM.Int8Type()
-        memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
+        if returnRoots !== nothing
+            # julia#55045: members with GC pointers keep them in the return roots.
+            sret_union_tape = fill_sret_union_tape!(B, sret_union_tape, sret, returnRoots, idxv, miRT)
+        else
+            memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
+        end
 
         sret_union_tape = nthfield_if_byref!(B, isboxed, sret_union_tape, res)
         if any_singleton
             use_singleton = and!(B, cur_singleton, not!(B, isboxed))
             sret_union_tape = select!(B, use_singleton, cur_singleton_val, sret_union_tape)
+        end
+        if returnRoots !== nothing
+            push!(res.argument_attributes[2], StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
         end
 
         res = sret
@@ -2503,7 +3026,21 @@ function enzyme_custom_common_rev(
                     Nothing,
                 },
             )
-            if StructTy != LLVM.VoidType()
+            if StructTy != LLVM.VoidType() && sret_union && returnRoots !== nothing &&
+                    CountTrackedPointers(StructTy).count > 0
+                # julia#55045: the primal and the shadow come before the tape, so in
+                # every member their GC pointers are the first return roots.
+                nroots = Int(CountTrackedPointers(StructTy).count)
+                move_sret_tofrom_roots!(
+                    B,
+                    StructTy,
+                    bitcast!(B, res, LLVM.PointerType(StructTy)),
+                    convert(LLVMType, AnyArray(nroots)),
+                    returnRoots,
+                    RootAndSRetPointerToValue;
+                    must_cache = true,
+                )
+            elseif StructTy != LLVM.VoidType()
                 lresV = load!(
                     B,
                     StructTy,
@@ -2528,7 +3065,10 @@ function enzyme_custom_common_rev(
             @assert !isghostty(RealRt)
             normalV = extract_value!(B, resV, idx)
             _, prim_sret, prim_roots = get_return_info(RealRt)
-            if prim_sret !== nothing
+            if boxed_union_return(RealRt, orig)
+                _, proots = union_return_buffers(gutils, orig, B, true)
+                normalV = boxed_union_value!(B, orig.value_type, normalV, proots, RealRt).ref
+            elseif prim_sret !== nothing
                 val = new_from_original(gutils, orig.operands[1 + orig_swiftself])
 
                 if prim_roots !== nothing && VERSION >= v"1.12"
@@ -2551,7 +3091,10 @@ function enzyme_custom_common_rev(
                 @assert !isghostty(RealRt)
                 shadowV = extract_value!(B, resV, idx)
                 _, prim_sret, prim_roots = get_return_info(RealRt)
-                if prim_sret !== nothing
+                if boxed_union_return(RealRt, orig)
+                    _, droots = union_return_buffers(gutils, orig, B, false)
+                    shadowV = boxed_union_shadow!(B, orig.value_type, shadowV, droots, RealRt, width).ref
+                elseif prim_sret !== nothing
                     dval = if is_constant_value(gutils, orig.operands[1 + orig_swiftself])
                         @assert prim_roots !== nothing && VERSION >= v"1.12"
                         @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
