@@ -452,6 +452,21 @@ end
 end
 
 """
+    bitsunion_field_nbytes(U) -> Int
+
+The bytes of data of a struct field of the isbits union `U`, as Julia lays it out
+(`jl_islayout_inline`). The field stores the data, then one selector byte: the
+0-based index of the component in `Base.uniontypes(U)`.
+"""
+function bitsunion_field_nbytes(@nospecialize(U::Union))::Int
+    fsz = Ref{Csize_t}(0)
+    al = Ref{Csize_t}(0)
+    n = ccall(:jl_islayout_inline, Cint, (Any, Ptr{Csize_t}, Ptr{Csize_t}), U, fsz, al)
+    @assert n != 0
+    return Int(fsz[])
+end
+
+"""
     union_alloca_info(UT) -> (nbytes, inline_roots)
 
 The bytes and the GC roots that a split union `UT` needs on the stack, as
