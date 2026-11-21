@@ -24,6 +24,9 @@ constraints:
 - `atol`: Absolute tolerance for `isapprox`.
 - `testset_name`: Name to use for a testset in which all tests are evaluated.
 
+`isapprox(...; rtol, atol)` is used in the comparison of the *primal* and *the partial
+derivative(s)*.
+
 # Examples
 
 Here we test a rule for a function of scalars. Because we don't provide an activity
