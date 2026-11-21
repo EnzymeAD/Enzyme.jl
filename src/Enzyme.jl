@@ -1629,6 +1629,7 @@ result, ∂v, ∂A
 end
 
 include("sugar.jl")
+include("sparse.jl")
 
 function _import_frule end # defined in EnzymeChainRulesCoreExt extension
 
