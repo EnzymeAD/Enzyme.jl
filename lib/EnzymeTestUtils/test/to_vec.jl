@@ -172,4 +172,33 @@ end
             @test Base.dataids(y2.a) == Base.dataids(y2.b)
         end
     end
+
+    @testset "cyclic mutable struct (#3116)" begin
+        mutable struct CyclicVecNode
+            val::Float64
+            prev::CyclicVecNode
+            next::CyclicVecNode
+            function CyclicVecNode(v::Float64)
+                n = new(v)
+                n.prev = n
+                n.next = n
+                return n
+            end
+        end
+        n1 = CyclicVecNode(1.5)
+        n2 = CyclicVecNode(2.5)
+        n1.next = n2
+        n1.prev = n2
+        n2.next = n1
+        n2.prev = n1
+
+        test_to_vec(n1)
+        v, from_vec = to_vec(n1)
+        @test v == [1.5, 2.5]
+        n1_new = from_vec([3.5, 4.5])
+        @test n1_new.val == 3.5
+        @test n1_new.next.val == 4.5
+        @test n1_new.next.next === n1_new
+        @test n1_new.prev === n1_new.next
+    end
 end
