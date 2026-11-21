@@ -61,6 +61,16 @@ end
     dv_bad = view(da, 2:3)
     @test_throws AssertionError Duplicated(v, dv_bad)
     @test Duplicated(v, dv_bad, false) isa Duplicated{<:SubArray}
+
+    # Array: mismatched sizes are rejected unless `check=false` (#636)
+    @test_throws AssertionError Duplicated([1.0, 2.0], [1.0, 2.0, 3.0])
+    @test Duplicated([1.0, 2.0], [1.0, 2.0, 3.0], false) isa Duplicated{Vector{Float64}}
+    @test_throws AssertionError Duplicated(ones(2, 3), ones(3, 2))
+    @test_throws AssertionError DuplicatedNoNeed([1.0, 2.0], [1.0])
+    @test_throws AssertionError BatchDuplicated([1.0, 2.0], ([1.0, 2.0], [1.0]))
+    @test_throws AssertionError BatchDuplicatedNoNeed([1.0, 2.0], ([1.0, 2.0], [1.0]))
+    @test_throws AssertionError MixedDuplicated([1.0, 2.0], Ref([1.0]))
+    @test_throws AssertionError BatchMixedDuplicated([1.0, 2.0], (Ref([1.0, 2.0]), Ref([1.0])))
 end
 
 @testset "Duplicated{Any}" begin
