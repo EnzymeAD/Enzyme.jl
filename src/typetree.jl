@@ -133,8 +133,26 @@ function get_offsets(@nospecialize(T::Type))
         offset = fieldoffset(T, f)
         subT = typed_fieldtype(T, f)
 
-        if !allocatedinline(subT) || subT isa UnionAll || subT isa Union || subT == Union{}
+        if !allocatedinline(subT)
             push!(results, (API.DT_Pointer, offset))
+            continue
+        end
+
+        if subT isa Union
+            rmT = remove_nothing_from_union_type(subT)
+            if !(rmT isa Union) && !(rmT isa UnionAll) && rmT != Union{} && allocatedinline(rmT)
+                for (sT, sO) in get_offsets(rmT)
+                    push!(results, (sT, sO + offset))
+                end
+            end
+            if T isa DataType && Base.isconcretetype(T)
+                desc = Base.DataTypeFieldDesc(T)
+                push!(results, (API.DT_Integer, Int(offset) + Int(desc[f].size) - 1))
+            end
+            continue
+        end
+
+        if subT isa UnionAll || subT == Union{}
             continue
         end
 
