@@ -91,5 +91,12 @@ using Quaternions
         @test dx isa BatchDuplicated
         @test dx.val === x
         @test length(dx.dval) == 2
+        dx = EnzymeTestUtils.auto_activity((x, MixedDuplicated))
+        @test dx isa MixedDuplicated
+        @test dx.val === x
+        dx = EnzymeTestUtils.auto_activity((x, BatchMixedDuplicated))
+        @test dx isa BatchMixedDuplicated
+        @test dx.val === x
+        @test length(dx.dval) == 2
     end
 end

@@ -3,10 +3,10 @@ using EnzymeTestUtils
 using Enzyme
 
 @testset "are_activities_compatible" begin
-    not_batch = (Active, Const, Duplicated)
+    not_batch = (Active, Const, Duplicated, MixedDuplicated)
     not_batch_ret = (not_batch..., DuplicatedNoNeed)
-    batch = (Active, Const, BatchDuplicated)
-    batch_ret = (Const, BatchDuplicated, BatchDuplicatedNoNeed)
+    batch = (Active, Const, BatchDuplicated, BatchMixedDuplicated)
+    batch_ret = (Const, BatchDuplicated, BatchDuplicatedNoNeed, BatchMixedDuplicated)
     @testset "compatible activities" begin
         @testset for Tret in not_batch_ret, Tx in not_batch, Ty in not_batch
             @test are_activities_compatible(Tret, Tx, Ty)
