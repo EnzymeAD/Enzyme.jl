@@ -837,4 +837,110 @@ end
     @test Enzyme.autodiff(Forward, isdefined_field_walk, Duplicated(2.0, 1.0)) == (2.0,)
 end
 
+@testset "differentiating through make_zero! and remake_zero!" begin
+    function mz_vec_after!(x, y)
+        buf = [2.0 * x[1], 3.0 * x[2]]
+        Enzyme.make_zero!(buf)
+        buf[1] += 5.0 * y[1]
+        buf[2] += 7.0 * y[2]
+        return buf[1] + buf[2]
+    end
+
+    x = [1.5, -2.0]
+    y = [0.4, 1.2]
+    dx1 = [1.0, 0.0]
+    dx2 = [0.0, 1.0]
+    dy1 = [1.0, 0.0]
+    dy2 = [0.0, 1.0]
+
+    # Forward mode (width 1 & batched): sensitivity wrt x (before make_zero!) is 0, wrt y (after) is [5, 7]
+    @test Enzyme.autodiff(Forward, mz_vec_after!, Duplicated(x, dx1), Const(y)) == (0.0,)
+    @test Enzyme.autodiff(Forward, mz_vec_after!, Const(x), Duplicated(y, dy1)) == (5.0,)
+    @test Enzyme.autodiff(
+        Forward,
+        mz_vec_after!,
+        BatchDuplicated(x, (dx1, dx2)),
+        BatchDuplicated(y, (dy1, dy2)),
+    ) == ((var"1" = 5.0, var"2" = 7.0),)
+
+    # Reverse mode (width 1 & batched)
+    gx = [9.0, 9.0]
+    gy = [0.0, 0.0]
+    Enzyme.autodiff(Reverse, mz_vec_after!, Active, Duplicated(x, gx), Duplicated(y, gy))
+    @test gx == [9.0, 9.0]
+    @test gy ≈ [5.0, 7.0]
+
+    gx1, gx2 = [0.0, 0.0], [0.0, 0.0]
+    gy1, gy2 = [0.0, 0.0], [0.0, 0.0]
+    out_mz = [0.0, 0.0]
+    Enzyme.autodiff(
+        Reverse,
+        (out, x, y) -> begin
+            out[1] = mz_vec_after!(x, y)
+            out[2] = 2.0 * mz_vec_after!(x, y)
+            return nothing
+        end,
+        Const,
+        BatchDuplicated(out_mz, ([1.0, 0.0], [0.0, 1.0])),
+        BatchDuplicated(x, (gx1, gx2)),
+        BatchDuplicated(y, (gy1, gy2)),
+    )
+    @test gx1 == [0.0, 0.0]
+    @test gx2 == [0.0, 0.0]
+    @test gy1 ≈ [5.0, 7.0]
+    @test gy2 ≈ [10.0, 14.0]
+
+    # MixedDuplicated on remake_zero!:
+    # immutable position b is NOT mutated by remake_zero!, while mutable vector a IS zeroed.
+    @noinline _remake_zero_mixed(t) = (Enzyme.remake_zero!(t); nothing)
+    function rmz_mixed(a, b)
+        t = (b, a)
+        _remake_zero_mixed(t)
+        return a[1] + 3.0 * t[1]
+    end
+    a = [10.0]
+    da = [0.0]
+    (_, db) = Enzyme.autodiff(Reverse, rmz_mixed, Active, Duplicated(copy(a), da), Active(2.0))[1]
+    @test da == [0.0]
+    @test db ≈ 3.0
+
+    # Runtime activity: reverse pass of make_zero! on a mixed active/const tuple must not
+    # clobber a runtime-inactive vector mutated after make_zero!.
+    const_buf = [99.0]
+    function mz_rtact(v)
+        active_buf = [2.0 * v]
+        tup = (active_buf, const_buf)
+        Enzyme.make_zero!(tup)
+        const_buf[1] = 42.0
+        return active_buf[1] + const_buf[1]
+    end
+    (dv,) = Enzyme.autodiff(Enzyme.set_runtime_activity(Reverse), Const(mz_rtact), Active, Active(3.0))[1]
+    @test dv == 0.0
+    @test const_buf[1] == 42.0
+
+    # Forward-over-Reverse where the inner gradient calls remake_zero! / make_zero!
+    function quad_loss(u)
+        return u[1]^3 + 2.0 * u[1] * u[2]^2
+    end
+    function inner_grad!(g, u)
+        Enzyme.remake_zero!(g)
+        Enzyme.autodiff(Enzyme.set_runtime_activity(Reverse), quad_loss, Active, Duplicated(u, g))
+        return nothing
+    end
+    u = [1.5, -2.0]
+    v = [0.5, 0.25]
+    g = zero(u)
+    hv = zero(u)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward),
+        inner_grad!,
+        Const,
+        Duplicated(g, hv),
+        Duplicated(u, v),
+    )
+    # H = [6*u1  4*u2; 4*u2  4*u1] = [9.0  -8.0; -8.0  6.0]
+    @test g ≈ [3 * u[1]^2 + 2 * u[2]^2, 4 * u[1] * u[2]]
+    @test hv ≈ [9.0 * v[1] - 8.0 * v[2], -8.0 * v[1] + 6.0 * v[2]]
+end
+
 end  # module MakeZeroTests
