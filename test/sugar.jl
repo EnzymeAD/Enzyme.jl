@@ -4,6 +4,19 @@ using LinearAlgebra
 mul_scalar(x, y) = x[1] * y[2] + x[2] * y[1]
 mul_vector(x, y) = [x[1] * y[2], x[2] * y[1]]
 
+@testset "TupleArray AbstractArray interface" begin
+    for (data, expected) in (
+            ((1.0, 2.0), [1.0, 2.0]),
+            ((1.0, 2.0, 3.0, 4.0, 5.0, 6.0), [1.0 3.0 5.0; 2.0 4.0 6.0]),
+        )
+        a = Enzyme.TupleArray(data, size(expected))
+        @test ndims(a) == ndims(expected)
+        @test eltype(a) === eltype(expected)
+        @test eltype(typeof(a)) === eltype(expected)
+        @test (@inferred convert(typeof(expected), a)) == expected
+    end
+end
+
 @testset "Forward Empty Gradient" begin
     inp = Float64[]
     res = gradient(Forward, sin, inp)
