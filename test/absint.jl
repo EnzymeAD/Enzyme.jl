@@ -367,6 +367,35 @@ end
     @test dp.caches == [0.0]
 end
 
+struct AbsintSplitInner
+    pad::Int
+    a::Vector{Float64}
+    b::Vector{Float64}
+    tail::Int
+end
+
+mutable struct AbsintSplitOuter
+    x::Tuple{AbsintSplitInner, AbsintSplitInner}
+end
+
+@noinline absint_split_inner(x::AbsintSplitInner) = x.a[1] * x.b[1] * x.pad
+absint_split_outer(o::AbsintSplitOuter) = absint_split_inner(o.x[1])
+absint_split_mk(v) = AbsintSplitInner(1, [v], [v + 1], 0)
+
+@testset "Absint memset of the pointer slots of a split stack slot" begin
+    # https://github.com/EnzymeAD/Enzyme.jl/issues/4049
+    # On 1.12+ the argument of `absint_split_inner` is split for inline roots.
+    # Julia writes -1 into the pointer slots of the stack copy, and LLVM merges
+    # these writes into one memset. The memset must get the Integer type.
+    o = AbsintSplitOuter((absint_split_mk(2.0), absint_split_mk(5.0)))
+    dout = Enzyme.make_zero(o)
+    autodiff(Reverse, absint_split_outer, Active, Duplicated(o, dout))
+    @test dout.x[1].a == [3.0]
+    @test dout.x[1].b == [2.0]
+    @test dout.x[2].a == [0.0]
+    @test dout.x[2].b == [0.0]
+end
+
 abstract type SlotAbs end
 struct SlotConst{T} <: SlotAbs
     σ::T

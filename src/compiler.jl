@@ -6413,6 +6413,7 @@ offsets Enzyme's type analysis keeps.
 
 If `ptr` points into an untyped stack slot (e.g. one created by SROA), the type
 is instead taken from the memcpy/memmove(s) that fill those bytes of the slot.
+An all-ones memset into the slot gives Integer bytes.
 """
 function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nospecialize(sz::LLVM.Value), enzyme_ctx::EnzymeContext)
     nbytes = sz isa LLVM.ConstantInt ? convert(Int, sz) : nothing
@@ -6471,10 +6472,13 @@ end
 The truetype entries for the `nbytes` bytes at `offset` into the untyped
 `alloca`, pieced together from the memcpy/memmove(s) whose destinations cover
 those bytes, or `nothing` if some byte is not covered by a copy from a typed source.
+Bytes that no copy covers, but that an all-ones memset covers, are Integer.
 """
 function alloca_memtransfer_entries(world::UInt, alloca::LLVM.AllocaInst, offset::Int, nbytes::Int, enzyme_ctx::EnzymeContext, depth::Int)
     # (destination offset, size, source pointer) of each copy into the alloca
     copies = Tuple{Int, Int, LLVM.Value}[]
+    # (destination offset, size) of each all-ones memset into the alloca
+    fillers = Tuple{Int, Int}[]
     todo = LLVM.Value[alloca]
     seen = Set{LLVM.Value}()
     while !isempty(todo)
@@ -6492,8 +6496,20 @@ function alloca_memtransfer_entries(world::UInt, alloca::LLVM.AllocaInst, offset
             fn = user.called_operand
             fn isa LLVM.Function || continue
             intr = fn.intrinsic
-            (intr == LLVM.Intrinsic("llvm.memcpy") || intr == LLVM.Intrinsic("llvm.memmove")) || continue
             ops = user.operands
+            if intr == LLVM.Intrinsic("llvm.memset")
+                # On Julia 1.12+, Julia writes -1 into the pointer slots of a struct
+                # that it splits for inline roots. LLVM can merge these writes into
+                # one memset. Nothing reads these bytes as data.
+                ops[1] == v || continue
+                ops[3] isa LLVM.ConstantInt || continue
+                (ops[2] isa LLVM.ConstantInt && convert(UInt64, ops[2]) == 0xff) || continue
+                dbase, doff = get_base_and_offset(ops[1])
+                dbase == alloca || continue
+                push!(fillers, (doff, convert(Int, ops[3])))
+                continue
+            end
+            (intr == LLVM.Intrinsic("llvm.memcpy") || intr == LLVM.Intrinsic("llvm.memmove")) || continue
             ops[1] == v || continue
             ops[3] isa LLVM.ConstantInt || continue
             dbase, doff = get_base_and_offset(ops[1])
@@ -6514,7 +6530,13 @@ function alloca_memtransfer_entries(world::UInt, alloca::LLVM.AllocaInst, offset
                 best = c
             end
         end
-        best === nothing && return nothing
+        if best === nothing
+            len = alloca_filler_length(fillers, copies, cur, stop)
+            len == 0 && return nothing
+            push!(entries, (API.DT_Integer, cur - offset))
+            cur += len
+            continue
+        end
         doff, csz, src = best
         len = min(doff + csz, stop) - cur
         piece = memtransfer_entries(world, src, len, enzyme_ctx, cur - doff, depth + 1)
@@ -6526,6 +6548,28 @@ function alloca_memtransfer_entries(world::UInt, alloca::LLVM.AllocaInst, offset
         cur += len
     end
     return entries
+end
+
+"""
+    alloca_filler_length(fillers, copies, cur, stop)
+
+The number of bytes from `cur` that an all-ones memset in `fillers` covers, up to
+`stop` or to the start of the next copy in `copies`. Zero if no memset covers `cur`.
+"""
+function alloca_filler_length(fillers::Vector{Tuple{Int, Int}}, copies::Vector{Tuple{Int, Int, LLVM.Value}}, cur::Int, stop::Int)
+    fend = cur
+    for (doff, fsz) in fillers
+        if doff <= cur < doff + fsz
+            fend = max(fend, doff + fsz)
+        end
+    end
+    fend = min(fend, stop)
+    for (doff, _, _) in copies
+        if cur < doff < fend
+            fend = doff
+        end
+    end
+    return fend - cur
 end
 
 function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
