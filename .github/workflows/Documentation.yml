@@ -9,6 +9,7 @@ on:
       - 'lib/**'
       - 'src/**'
       - 'Project.toml'
+      - 'CHANGELOG.md'
   push:
     branches:
       - main
@@ -20,6 +21,7 @@ on:
       - 'lib/**'
       - 'src/**'
       - 'Project.toml'
+      - 'CHANGELOG.md'
     tags: '*'
 
 concurrency:

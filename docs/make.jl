@@ -54,6 +54,17 @@ if get(ENV, "BUILD_DOCS_NOTEBOOKS", "true") == "true"
     build()
 end
 
+# Generate the release notes page from CHANGELOG.md
+
+using Changelog
+
+Changelog.generate(
+    Changelog.Documenter(),
+    joinpath(@__DIR__, "..", "CHANGELOG.md"),
+    joinpath(@__DIR__, "src", "release-notes.md");
+    repo = "EnzymeAD/Enzyme.jl",
+    branch = "main",
+)
 
 makedocs(;
     modules = [Enzyme, EnzymeCore, EnzymeTestUtils],
@@ -85,6 +96,7 @@ makedocs(;
             "For developers" => "dev_docs.md",
             "Internal API" => "internal_api.md",
         ],
+        "Release notes" => "release-notes.md",
     ],
     doctest = true,
 )
