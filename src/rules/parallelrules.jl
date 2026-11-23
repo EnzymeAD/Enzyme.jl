@@ -842,7 +842,30 @@ end
     return nothing
 end
 
-@register_fwd function newtask_fwd(B, orig, gutils, normalR, shadowR)
+# Return the `fn`, `post` and `ssize` operands of a call that makes a task.
+# If `offset === nothing`, the call is `ccall(:jl_new_task, ..., fn, post, ssize)`.
+# Julia 1.14 and later use the builtin `Core._task(fn, ssize[, invoked])` through
+# `julia.call`. Then `offset` is the index of the operand before the arguments.
+# The builtin has no `post` argument. Thus `post` is `nothing`.
+# The optional `invoked` operand refers to the original closure.
+# The rules do not use it.
+function newtask_operands(B, orig, gutils, offset)
+    if offset === nothing
+        fn = orig.operands[1]
+        post = new_from_original(gutils, orig.operands[2])
+        ssize = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(
+            B,
+            new_from_original(gutils, orig.operands[3]),
+        )
+    else
+        fn = orig.operands[offset + 1]
+        post = unsafe_to_llvm(B, nothing)
+        ssize = new_from_original(gutils, orig.operands[offset + 2])
+    end
+    return fn, post, ssize
+end
+
+function common_newtask_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -851,15 +874,13 @@ end
     mode = get_mode(gutils)
 
 
+    fn, post, ssize = newtask_operands(B, orig, gutils, offset)
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
-        new_from_original(gutils, orig.operands[1]),
-        invert_pointer(gutils, orig.operands[1], B),
-        new_from_original(gutils, orig.operands[2]),
-        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(
-            B,
-            new_from_original(gutils, orig.operands[3]),
-        ),
+        new_from_original(gutils, fn),
+        invert_pointer(gutils, fn, B),
+        post,
+        ssize,
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
         unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
         unsafe_to_llvm(B, Val(width)),
@@ -880,7 +901,7 @@ end
     return false
 end
 
-@register_aug function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+function common_newtask_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     # fn, dfn = augmentAndGradient(fn)
     # t = jl_new_task(fn)
     # # shadow t
@@ -904,15 +925,13 @@ end
     ModifiedBetween = (uncacheable[1] != 0,)
 
 
+    fn, post, ssize = newtask_operands(B, orig, gutils, offset)
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),
-        new_from_original(gutils, orig.operands[1]),
-        invert_pointer(gutils, orig.operands[1], B),
-        new_from_original(gutils, orig.operands[2]),
-        (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(
-            B,
-            new_from_original(gutils, orig.operands[3]),
-        ),
+        new_from_original(gutils, fn),
+        invert_pointer(gutils, fn, B),
+        post,
+        ssize,
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
         unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
         unsafe_to_llvm(B, Val(width)),
@@ -946,6 +965,14 @@ end
     end
 
     return false
+end
+
+@register_fwd function newtask_fwd(B, orig, gutils, normalR, shadowR)
+    return common_newtask_fwd(nothing, B, orig, gutils, normalR, shadowR)
+end
+
+@register_aug function newtask_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    return common_newtask_augfwd(nothing, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 @register_rev function newtask_rev(B, orig, gutils, tape)

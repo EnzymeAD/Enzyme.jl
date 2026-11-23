@@ -1,6 +1,26 @@
 using Enzyme
 using Test
 
+function task_square!(x)
+    return Task() do
+        x[1] = x[1] * x[1]
+        nothing
+    end
+end
+
+@testset "Task creation $(Threads.nthreads())" begin
+    # Make the task in forward mode and run it outside of `autodiff`.
+    # The forward rule gives the same task as primal and shadow.
+    x = [3.0]
+    dx = [1.0]
+    task = Enzyme.autodiff(Forward, task_square!, Duplicated, Duplicated(x, dx))[1]
+    @test task isa Task
+    schedule(task)
+    wait(task)
+    @test x ≈ [9.0]
+    @test dx ≈ [6.0]
+end
+
 @testset "Threads $(Threads.nthreads())" begin
     function tasktest(M, x)
         xr = Ref(x)

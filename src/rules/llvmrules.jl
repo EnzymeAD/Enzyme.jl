@@ -191,6 +191,9 @@ include("parallelrules.jl")
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        if in(name, ("ijl_f__task", "jl_f__task"))
+            return common_newtask_fwd(2, B, orig, gutils, normalR, shadowR)
+        end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
             return common_finalizer_fwd(2, B, orig, gutils, normalR, shadowR)
         end
@@ -289,6 +292,9 @@ end
         end
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             return common_f_svec_ref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+        end
+        if in(name, ("ijl_f__task", "jl_f__task"))
+            return common_newtask_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
             return common_finalizer_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
@@ -394,6 +400,9 @@ end
         end
         if in(name, ("ijl_f__svec_ref", "jl_f__svec_ref"))
             common_f_svec_ref_rev(2, B, orig, gutils, tape)
+            return nothing
+        end
+        if in(name, ("ijl_f__task", "jl_f__task"))
             return nothing
         end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
