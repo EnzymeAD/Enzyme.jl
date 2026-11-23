@@ -14,6 +14,8 @@ Earlier releases: up to and including v0.13.221.
 
 #### Changed
 
+- Julia 1.14: Enzyme applies a custom rule with a `::Const{Type{T}}` argument, and shows a warning for the rule. Julia dispatch does not select such a rule on Julia 1.14. Write `::Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, and `::Const{<:Type{T}}` if `T` is a type variable [#4126].
+- The minimum version of EnzymeCore is 0.8.29 [#4126].
 - The minimum version of Enzyme_jll is 0.0.311 [#3765].
 - The minimum version of GPUCompiler on the 2.x line is 2.23. GPUCompiler 1.x from 1.23.1 is still supported [#4105].
 - The minimum version of LLVM.jl is 10.5.2 [#4077], [#4078].
@@ -68,3 +70,4 @@ Earlier releases: up to and including v0.2.9.
 [#4105]: https://github.com/EnzymeAD/Enzyme.jl/issues/4105
 [#4124]: https://github.com/EnzymeAD/Enzyme.jl/issues/4124
 [#4125]: https://github.com/EnzymeAD/Enzyme.jl/issues/4125
+[#4126]: https://github.com/EnzymeAD/Enzyme.jl/issues/4126
