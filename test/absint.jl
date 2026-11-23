@@ -615,14 +615,14 @@ end
 @testset "inserted Julia values are named, not addressed" begin
     val = SlotConst{Float64}(2.5)
     enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
-    key = Enzyme.insert_julia_value!(enzyme_ctx, "hint", val)
-    @test startswith(key, "inserted\$hint\$")
+    key = Enzyme.insert_julia_value!(enzyme_ctx, val)
+    @test startswith(key, "inserted\$")
     @test !occursin(string(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), val))), key)
     @test enzyme_ctx.inserted_values[key] === val
     @test !haskey(Enzyme.Compiler.JuliaEnzymeNameMap, key)
     # The same value is the same name; another value is another one.
-    @test Enzyme.insert_julia_value!(enzyme_ctx, "hint", val) == key
-    @test Enzyme.insert_julia_value!(enzyme_ctx, "hint", SlotConst{Float64}(3.5)) != key
+    @test Enzyme.insert_julia_value!(enzyme_ctx, val) == key
+    @test Enzyme.insert_julia_value!(enzyme_ctx, SlotConst{Float64}(3.5)) != key
 
     # Analysis finds the value through the compilation's table, and so does a later compilation
     # that links the module in, from the table the module takes along.
@@ -651,7 +651,7 @@ end
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
         val = Ref{Any}(SlotConst{Float64}(4.5))
-        key = Enzyme.insert_julia_value!(enzyme_ctx, "link", val[])
+        key = Enzyme.insert_julia_value!(enzyme_ctx, val[])
         mod = LLVM.Module("linked")
         gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
@@ -756,7 +756,7 @@ end
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
         mod = LLVM.Module("device")
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
-        key = Enzyme.insert_julia_value!(enzyme_ctx, "device", SlotConst{Float64})
+        key = Enzyme.insert_julia_value!(enzyme_ctx, SlotConst{Float64})
         gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
         LLVM.IRBuilder() do B
