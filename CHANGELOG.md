@@ -40,6 +40,10 @@ Earlier releases: up to and including v0.8.28.
 
 ### Unreleased
 
+#### Added
+
+- `EnzymeCore.TypeEgal{T}`, the type parameter of `Const(T)` for a type `T`. It is `Core.TypeEgal{T}` on Julia 1.14 and later, and `Type{T}` on earlier versions. On Julia 1.14, a custom rule with a `::Const{Type{T}}` argument does not apply. Write `::Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, and `::Const{<:Type{T}}` if `T` is a type variable [#4124].
+
 ## EnzymeTestUtils
 
 Earlier releases: up to and including v0.2.9.
@@ -62,4 +66,5 @@ Earlier releases: up to and including v0.2.9.
 [#4081]: https://github.com/EnzymeAD/Enzyme.jl/issues/4081
 [#4097]: https://github.com/EnzymeAD/Enzyme.jl/issues/4097
 [#4105]: https://github.com/EnzymeAD/Enzyme.jl/issues/4105
+[#4124]: https://github.com/EnzymeAD/Enzyme.jl/issues/4124
 [#4125]: https://github.com/EnzymeAD/Enzyme.jl/issues/4125

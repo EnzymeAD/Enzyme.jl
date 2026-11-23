@@ -53,6 +53,34 @@ struct Const{T} <: Annotation{T}
     val::T
 end
 
+@static if isdefined(Core, :TypeEgal)
+    const TypeEgal = Core.TypeEgal
+else
+    const TypeEgal{T} = Type{T}
+end
+
+"""
+    EnzymeCore.TypeEgal{T}
+
+The type that Julia dispatches on for the type value `T`.
+It is `Core.TypeEgal{T}` on Julia 1.14 and later, and `Type{T}` on earlier versions.
+
+`Const(T)` for a type `T` has the type `Const{EnzymeCore.TypeEgal{T}}`.
+Use this name in the signature of a custom rule that has a type as an argument:
+
+```julia
+function EnzymeRules.forward(config, func::Const{typeof(f)}, RT, ty::Const{EnzymeCore.TypeEgal{BigFloat}})
+```
+
+On Julia 1.14 and later, a rule with `ty::Const{Type{BigFloat}}` does not apply,
+because `Const` is invariant and `Core.TypeEgal{T}` is a strict subtype of `Type{T}`.
+
+!!! warning
+    `T` must be a fixed type. On Julia 1.14 and later, `Core.TypeEgal` does not accept
+    a type variable. If the rule is generic in `T`, write `Const{<:Type{T}}`.
+"""
+TypeEgal
+
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`. `Core.Typeof` is
 # `Type{T}` before Julia 1.14 and `Core.TypeEgal{T}`, the type Julia dispatches on, since.
 Const(::Type{T}) where {T} = Const{Core.Typeof(T)}(T)
