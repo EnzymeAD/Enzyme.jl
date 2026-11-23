@@ -452,6 +452,18 @@ end
 end
 
 """
+    uniontype_small_members(UT) -> Vector{Any}
+
+Return the members of the union `UT` that a split union holds unboxed, in
+`for_each_uniontype_small` order.
+"""
+function uniontype_small_members(@nospecialize(UT::Type))::Vector{Any}
+    members = Any[]
+    for_each_uniontype_small(Base.Fix1(push!, members), UT)
+    return members
+end
+
+"""
     union_alloca_info(UT) -> (nbytes, align, roots, allunbox)
 
 Return the data that `union_alloca_type` in Julia's `cgutils.cpp` computes for
@@ -476,7 +488,7 @@ function union_alloca_info(@nospecialize(UT::Type))::Tuple{Int, Int, Int, Bool}
         if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
             nb1 = sizeof(jlrettype)
             n_roots = UNION_INLINE_ROOTS ? datatype_npointers(jlrettype) : 0
-            if n_roots == 0 || nb1 != n_roots * sizeof(Ptr{Cvoid})
+            if nb1 != n_roots * sizeof(Ptr{Cvoid})
                 nbytes = max(nbytes, nb1)
                 align = max(align, Base.datatype_alignment(jlrettype))
             end

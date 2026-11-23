@@ -1285,8 +1285,7 @@ function boxed_union_value!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, boxed::LLVM.V
     if isempty(func.blocks)
         func.linkage = LLVM.Linkage.Internal
 
-        members = Any[]
-        for_each_uniontype_small(Base.Fix1(push!, members), UT)
+        members = uniontype_small_members(UT)
 
         @dispose B2 = IRBuilder() begin
             obj = func.parameters[1]
@@ -1365,8 +1364,7 @@ function unboxed_union_value!(B::LLVM.IRBuilder, uty::LLVM.LLVMType, boxed::LLVM
     if isempty(func.blocks)
         func.linkage = LLVM.Linkage.Internal
 
-        members = Any[]
-        for_each_uniontype_small(Base.Fix1(push!, members), UT)
+        members = uniontype_small_members(UT)
 
         @dispose B2 = IRBuilder() begin
             obj, bufp = func.parameters
@@ -1670,7 +1668,7 @@ end
 
                 droots = if prim_roots !== nothing && VERSION >= v"1.12"
                     @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
-                    invert_pointer(gutils, orig.operands[2], B)
+                    invert_pointer(gutils, orig.operands[2 + orig_swiftself], B)
                 end
 
                 for idx in 1:width
@@ -2128,8 +2126,7 @@ function fill_sret_union_tape!(B::LLVM.IRBuilder, tape::LLVM.Value, sret::LLVM.V
     if isempty(func.blocks)
         func.linkage = LLVM.Linkage.Internal
 
-        members = Any[]
-        for_each_uniontype_small(Base.Fix1(push!, members), aug_UT)
+        members = uniontype_small_members(aug_UT)
 
         @dispose B2 = IRBuilder() begin
             entry = BasicBlock(func, "entry")
@@ -2719,6 +2716,10 @@ function enzyme_custom_common_rev(
             sret_lty
         end
         sret = alloca!(alloctx, sret_lty_foralloca)
+        if sret_union
+            # The rule stores each member with the alignment of its type.
+            LLVM.alignment!(sret, union_alloca_info(miRT)[2])
+        end
         sret.metadata["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
