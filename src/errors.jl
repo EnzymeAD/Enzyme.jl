@@ -1461,6 +1461,13 @@ function julia_error(
                 end
             end
 
+            if isa(cur, LLVM.CallInst)
+                _, callRT = enzyme_custom_extract_mi(cur, false)
+                if callRT !== nothing && get_return_info(callRT)[2] === nothing && guaranteed_const_nongen(callRT, world)
+                    return make_batched(ncur, prevbb)
+                end
+            end
+
             legal, TT, byref = abs_typeof(cur, enzyme_ctx, true)
 
             if legal
