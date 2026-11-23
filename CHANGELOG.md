@@ -29,6 +29,7 @@ Earlier releases: up to and including v0.13.221.
 - Julia 1.14: support for the field-aware write barriers [#3765].
 - Julia 1.14: a segmentation fault in `Enzyme.Compiler.enzyme_code_llvm` [#4097].
 - Julia 1.14: the lookup of the CHOLMOD struct types of SparseArrays [#4075].
+- Julia 1.14: `===` on a type gave `false` in a custom rule, when one type came from the differentiated code and the rule named the other [#4125].
 - LLVM 21 and later: the error `Unknown attribute kind: nocapture` [#4076].
 - LLVM 21 and later: an assertion failure when Enzyme imports a cached autodiff thunk [#4079].
 - LLVM 22: the new form of the lifetime intrinsics [#4077].
@@ -61,3 +62,4 @@ Earlier releases: up to and including v0.2.9.
 [#4081]: https://github.com/EnzymeAD/Enzyme.jl/issues/4081
 [#4097]: https://github.com/EnzymeAD/Enzyme.jl/issues/4097
 [#4105]: https://github.com/EnzymeAD/Enzyme.jl/issues/4105
+[#4125]: https://github.com/EnzymeAD/Enzyme.jl/issues/4125
