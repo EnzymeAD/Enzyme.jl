@@ -1461,6 +1461,67 @@ end
     return false
 end
 
+# Return a copy of the rule signature `TT` in which each `Const{TypeEgal{S}}` is
+# `Const{Type{S}}`. Return `nothing` if `TT` has no `Const{TypeEgal{S}}`.
+# Before Julia 1.14, `is_typeegal` is always false, and this always returns `nothing`.
+function typeegal_fallback_sig(@nospecialize(TT::Type))::Union{Nothing, Type}
+    params = nothing
+    for (i, P) in enumerate(TT.parameters)
+        if P isa DataType && P <: Const && is_typeegal(P.parameters[1])
+            if params === nothing
+                params = collect(Any, TT.parameters)
+            end
+            params[i] = Const{Type{typeegal_parameter(P.parameters[1])}}
+        end
+    end
+    params === nothing && return nothing
+    return Tuple{params...}
+end
+
+const TYPEEGAL_FALLBACK_WARNED = Set{Method}()
+const TYPEEGAL_FALLBACK_LOCK = ReentrantLock()
+
+# Show one warning for each rule method that Enzyme applies through `typeegal_fallback_sig`.
+function warn_typeegal_fallback(@nospecialize(meth))
+    meth isa Method || return nothing
+    first = @lock TYPEEGAL_FALLBACK_LOCK begin
+        if meth in TYPEEGAL_FALLBACK_WARNED
+            false
+        else
+            push!(TYPEEGAL_FALLBACK_WARNED, meth)
+            true
+        end
+    end
+    if first
+        @safe_warn "This custom rule has a `Const{Type{T}}` argument. On Julia 1.14 and later, the type of `Const(T)` is `Const{Core.TypeEgal{T}}`, and Julia dispatch does not select this rule. Enzyme applies the rule, but a later version can remove this fallback. Write `Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, or `Const{<:Type{T}}` if `T` is a type variable." rule = meth
+    end
+    return nothing
+end
+
+# Find the rule method instance for the rule signature `TT`.
+# On Julia 1.14, a type argument `S` has the annotation `Const{TypeEgal{S}}`. If no rule
+# applies to `TT`, try again with `Const{Type{S}}` (see `typeegal_fallback_sig`), so that
+# rules written for `Const{Type{S}}` before Julia 1.14 apply. Both annotations have the
+# same LLVM layout (one boxed pointer to `S`), so the arguments are the same.
+# Return the method instance (or `nothing`) and the signature that was used.
+function rule_methodinstance(
+        @nospecialize(mode::Union{EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}),
+        @nospecialize(functy::Type), @nospecialize(TT::Type), world::UInt
+    )
+    mi = my_methodinstance(mode, functy, TT, world)
+    if mi === nothing
+        TT2 = typeegal_fallback_sig(TT)
+        if TT2 !== nothing
+            mi2 = my_methodinstance(mode, functy, TT2, world)
+            if mi2 !== nothing
+                warn_typeegal_fallback(mi2.def)
+                return mi2, TT2
+            end
+        end
+    end
+    return mi, TT
+end
+
 @inline function aug_fwd_mi(
         orig::LLVM.CallInst,
         gutils::GradientUtils,
@@ -1521,7 +1582,7 @@ end
         typeof(EnzymeRules.augmented_primal)
     end
 
-    ami = my_methodinstance(Reverse, functy, augprimal_TT, world)
+    ami, augprimal_TT = rule_methodinstance(Reverse, functy, augprimal_TT, world)
     if ami === nothing
         augprimal_TT = Tuple{typeof(world), functy, augprimal_TT.parameters...}
         ami = my_methodinstance(
@@ -1611,7 +1672,7 @@ end
         typeof(EnzymeRules.forward)
     end
     @safe_debug "Applying custom forward rule" TT = TT, functy = functy
-    fmi = my_methodinstance(Forward, functy, TT, world)
+    fmi, TT = rule_methodinstance(Forward, functy, TT, world)
     if fmi === nothing
         TT = Tuple{typeof(world), functy, TT.parameters...}
         fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)
@@ -1919,7 +1980,7 @@ function enzyme_custom_common_rev(
         end
 
         @safe_debug "Applying custom reverse rule" TT = rev_TT, functy = functy
-        rmi = my_methodinstance(Reverse, functy, rev_TT, world)
+        rmi, rev_TT = rule_methodinstance(Reverse, functy, rev_TT, world)
 
         if rmi === nothing
             rev_TT = Tuple{typeof(world), functy, rev_TT.parameters...}
