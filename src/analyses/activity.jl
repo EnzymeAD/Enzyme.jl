@@ -300,7 +300,8 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                 AbstractIsMixed,
             )
         else
-            if justActive
+            # A boxed union can hold active scalar data at runtime.
+            if justActive && !AbstractIsMixed
                 return AnyState
             end
             if active_reg_inner(T.a, seen, world, justActive, UnionSret, false) !=
