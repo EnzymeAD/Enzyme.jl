@@ -1298,10 +1298,6 @@ function EnzymeNonPower2Cache!(val)
     return ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
-function EnzymeRemoveTrivialAtomicIncrements(func)
-    return ccall((:EnzymeRemoveTrivialAtomicIncrements, libEnzyme), Cvoid, (LLVMValueRef,), func)
-end
-
 function EnzymeAddAttributorLegacyPass(PM)
     return ccall(
         (:EnzymeAddAttributorLegacyPass, libEnzyme),
@@ -1454,10 +1450,6 @@ end
 
 function SetMustCache!(i1)
     return ccall((:EnzymeSetMustCache, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), i1)
-end
-
-function SetForMemSet!(i1)
-    return ccall((:EnzymeSetForMemSet, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), i1)
 end
 
 function HasFromStack(i1)
