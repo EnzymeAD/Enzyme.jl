@@ -7,3 +7,4 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 [compat]
 Clang = "0.19"
 Runic = "1.11.1"
+julia = "1.11 - 1.13"

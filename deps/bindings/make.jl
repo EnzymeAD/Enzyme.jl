@@ -2,7 +2,10 @@
 #
 # Usage:
 #
-#     julia --project=deps/bindings deps/bindings/make.jl [path/to/Enzyme]
+#     julia +1.12 --project=deps/bindings deps/bindings/make.jl [path/to/Enzyme]
+#
+# Clang.jl 0.19 mis-translates `typedef struct X *XRef` with libclang >= 22, which ships
+# with Julia 1.14, so run this with Julia 1.13 or older (see the compat in Project.toml).
 #
 # `path/to/Enzyme` is a checkout of https://github.com/EnzymeAD/Enzyme. Without it, the
 # Enzyme release matching the Enzyme_jll compat bound in Enzyme.jl's Project.toml is cloned.
@@ -11,7 +14,7 @@ using Pkg: Pkg
 Pkg.instantiate()
 
 using Clang.Generators
-using Clang: CLLinkageSpec, children
+using Clang: CLClassDecl, CLLinkageSpec, CLMacroDefinition, children
 using LLVM_full_jll: LLVM_full_jll
 using Runic: Runic
 using TOML: TOML
@@ -25,6 +28,20 @@ function Generators.collect_top_level_nodes!(
     end
     return nodes
 end
+
+# CApi.h defines no macros we need, and tokenizing those from system headers trips an assertion.
+Generators.collect_top_level_nodes!(nodes::Vector{ExprNode}, ::CLMacroDefinition, options) = nodes
+
+# Skip the forward-declared C++ classes `GradientUtils` and `DiffeGradientUtils`: they are
+# only used through pointers, which are translated to `Ptr{Cvoid}`.
+Generators.collect_top_level_nodes!(nodes::Vector{ExprNode}, ::CLClassDecl, options) = nodes
+
+# The llvm-c reference types come from LLVM.API, which the generated file is loaded next to.
+@add_def LLVMContextRef
+@add_def LLVMModuleRef
+@add_def LLVMTypeRef
+@add_def LLVMValueRef
+@add_def LLVMBuilderRef
 
 function enzyme_source(args)
     isempty(args) || return abspath(only(args))
@@ -49,12 +66,17 @@ function main(args)
     options = load_options(joinpath(@__DIR__, "wrap.toml"))
     output = normpath(joinpath(@__DIR__, options["general"]["output_file_path"]))
     options["general"]["output_file_path"] = output
-    options["general"]["prologue_file_path"] =
-        joinpath(@__DIR__, options["general"]["prologue_file_path"])
 
     # CApi.h forward-declares C++ classes, so it has to be parsed as C++.
     clang_args = get_default_args(; is_cxx = true)
-    append!(clang_args, ["-x", "c++", "-isystem", llvm_includedir()])
+    append!(
+        clang_args,
+        [
+            "-x", "c++", "-isystem", llvm_includedir(),
+            # llvm-c/DataTypes.h insists on these in C++ mode.
+            "-D__STDC_LIMIT_MACROS", "-D__STDC_CONSTANT_MACROS",
+        ]
+    )
 
     ctx = create_context([header], clang_args, options)
     build!(ctx)
