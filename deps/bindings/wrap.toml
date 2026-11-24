@@ -1,0 +1,28 @@
+[general]
+library_name = "libEnzyme"
+output_file_path = "../../src/api/libEnzyme_h.jl"
+prologue_file_path = "./prologue.jl"
+epilogue_file_path = ""
+use_julia_native_enum_type = false
+use_deterministic_symbol = true
+smart_de_anonymize = true
+generate_isystem_symbols = false
+extract_c_comment_style = "doxygen"
+fold_single_line_comment = false
+struct_field_comment_style = "outofline"
+show_c_function_prototype = false
+output_ignorelist = [
+    "ENZYME_CAPI_H",
+]
+
+[codegen]
+use_julia_bool = false
+always_NUL_terminated_string = true
+is_function_strictly_typed = false
+opaque_func_arg_as_PtrCvoid = false
+opaque_as_mutable_struct = true
+use_ccall_macro = true
+
+[codegen.macro]
+macro_mode = "basic"
+add_comment_for_skipped_macro = false
