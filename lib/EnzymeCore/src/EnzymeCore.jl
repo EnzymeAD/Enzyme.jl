@@ -72,8 +72,8 @@ Use this name in the signature of a custom rule that has a type as an argument:
 function EnzymeRules.forward(config, func::Const{typeof(f)}, RT, ty::Const{EnzymeCore.TypeEgal{BigFloat}})
 ```
 
-On Julia 1.14 and later, a rule with `ty::Const{Type{BigFloat}}` does not apply,
-because `Const` is invariant and `Core.TypeEgal{T}` is a strict subtype of `Type{T}`.
+On Julia 1.14 and later, `Const{Type{BigFloat}}` is a different type, because `Const` is
+invariant and `Core.TypeEgal{T}` is a strict subtype of `Type{T}`.
 
 !!! warning
     `T` must be a fixed type. On Julia 1.14 and later, `Core.TypeEgal` does not accept
