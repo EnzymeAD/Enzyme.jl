@@ -265,4 +265,9 @@ end
             end
         end
     end
+
+    @testset "type as an argument" begin
+        f_type_arg_rev(::Type{T}, x) where {T} = T(2) * x^2
+        test_reverse(f_type_arg_rev, Active, (Float64, Const), (3.0, Active))
+    end
 end

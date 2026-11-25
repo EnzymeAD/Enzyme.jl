@@ -11,7 +11,6 @@ For releases up to and including v0.13.221, see the [GitHub releases](https://gi
 
 ### Changed
 
-- Julia 1.14: Enzyme applies a custom rule with a `::Const{Type{T}}` argument, and shows a warning for the rule. Julia dispatch does not select such a rule on Julia 1.14. Write `::Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, and `::Const{<:Type{T}}` if `T` is a type variable [#4126].
 - The minimum version of EnzymeCore is 0.8.29 [#4126].
 - The minimum version of Enzyme_jll is 0.0.311 [#3765].
 - The minimum version of GPUCompiler on the 2.x line is 2.23. GPUCompiler 1.x from 1.23.1 is still supported [#4105].
@@ -28,6 +27,7 @@ For releases up to and including v0.13.221, see the [GitHub releases](https://gi
 - Julia 1.14: support for the field-aware write barriers [#3765].
 - Julia 1.14: a segmentation fault in `Enzyme.Compiler.enzyme_code_llvm` [#4097].
 - Julia 1.14: the lookup of the CHOLMOD struct types of SparseArrays [#4075].
+- Julia 1.14: a custom rule with a `::Const{Type{T}}` argument did not apply, because the annotation of a type argument is `Const{Core.TypeEgal{T}}`. Enzyme now applies such a rule, for each argument separately. A rule with `::Const{EnzymeCore.TypeEgal{T}}` has priority over the same rule with `::Const{Type{T}}`. The rules for the `BigFloat` constructor apply again [#4126].
 - Julia 1.14: `===` on a type gave `false` in a custom rule, when one type came from the differentiated code and the rule named the other [#4125].
 - LLVM 21 and later: the error `Unknown attribute kind: nocapture` [#4076].
 - LLVM 21 and later: an assertion failure when Enzyme imports a cached autodiff thunk [#4079].

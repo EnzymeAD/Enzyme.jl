@@ -541,16 +541,6 @@ end
 # Julia 1.14 (julia#62001): only `Core.TypeEgal{T}` is a ghost in specsig; `Type{T}` is boxed.
 import EnzymeCore: TypeEgal
 
-@static if isdefined(Core, :TypeEgal)
-    # True if `T` is `Core.TypeEgal{S}`.
-    is_typeegal(@nospecialize(T)) = T isa Core.TypeEgal
-    # The type `S` of `Core.TypeEgal{S}`.
-    typeegal_parameter(@nospecialize(T)) = Base.type_parameter(T)
-else
-    is_typeegal(@nospecialize(T)) = false
-    typeegal_parameter(@nospecialize(T)) = T.parameters[1]
-end
-
 # From https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L570
 @inline function isghostty(@nospecialize(ty))
     if ty === Union{}

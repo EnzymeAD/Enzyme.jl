@@ -1461,65 +1461,79 @@ end
     return false
 end
 
-# Return a copy of the rule signature `TT` in which each `Const{TypeEgal{S}}` is
-# `Const{Type{S}}`. Return `nothing` if `TT` has no `Const{TypeEgal{S}}`.
-# Before Julia 1.14, `is_typeegal` is always false, and this always returns `nothing`.
-function typeegal_fallback_sig(@nospecialize(TT::Type))::Union{Nothing, Type}
-    params = nothing
-    for (i, P) in enumerate(TT.parameters)
-        if P isa DataType && P <: Const && is_typeegal(P.parameters[1])
-            if params === nothing
-                params = collect(Any, TT.parameters)
+# On Julia 1.14, a type argument `S` has the annotation `Const{TypeEgal{S}}`. A rule that
+# was written before Julia 1.14 has a `Const{Type{S}}` argument. `TypeEgal{S}` is a subtype
+# of `Type{S}`, thus Enzyme also applies such a rule. The two annotations have the same
+# layout (one pointer to `S`), so the arguments of the call do not change.
+#
+# `relaxed` is `EnzymeRules._relax_rule_signature(TT)`: each `Const{TypeEgal{S}}` of `TT`
+# is `Const{<:Type{S}}`. Find the rule methods that match `relaxed`. For each method,
+# make the signature that the method accepts: `Const{Type{S}}` at the positions where the
+# method has that type, and `TT` at all other positions. Then select one signature:
+# 1. The signature of the more specific method.
+# 2. If no method is more specific, the signature with fewer `Const{Type{S}}` positions.
+#    Thus a rule for `Const{TypeEgal{S}}` has priority over the same rule for `Const{Type{S}}`.
+# Return `nothing` if no method matches.
+@static if isdefined(Core, :TypeEgal)
+    function select_rule_signature(
+            @nospecialize(mode::Union{EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}),
+            @nospecialize(functy::Type), @nospecialize(TT::Type), @nospecialize(relaxed::Type),
+            world::UInt
+        )
+        interp = Compiler.primal_interp_world(mode, world)
+        sig = Tuple{functy, relaxed.parameters...}
+        result = Core.Compiler.findall(sig, Core.Compiler.method_table(interp); limit = -1)
+        (result === nothing || result === missing) && return nothing
+
+        best = nothing
+        best_sig = nothing
+        best_legacy = 0
+        for match in result.matches
+            match = match::Core.MethodMatch
+            spec = Base.unwrap_unionall(match.spec_types)
+            params = collect(Any, TT.parameters)
+            legacy = 0
+            for i in 1:length(params)
+                relaxed.parameters[i] === params[i] && continue
+                # The first parameter of `spec` is the type of the rule function.
+                length(spec.parameters) > i || continue
+                S = spec.parameters[i + 1]
+                if S isa DataType && isconcretetype(S) && S !== params[i]
+                    params[i] = S
+                    legacy += 1
+                end
             end
-            params[i] = Const{Type{typeegal_parameter(P.parameters[1])}}
+            method_sig = match.method.sig
+            Tuple{functy, params...} <: method_sig || continue
+            if best === nothing || Base.morespecific(method_sig, best_sig) ||
+                    (legacy < best_legacy && !Base.morespecific(best_sig, method_sig))
+                best = Tuple{params...}
+                best_sig = method_sig
+                best_legacy = legacy
+            end
         end
+        return best
     end
-    params === nothing && return nothing
-    return Tuple{params...}
-end
-
-const TYPEEGAL_FALLBACK_WARNED = Set{Method}()
-const TYPEEGAL_FALLBACK_LOCK = ReentrantLock()
-
-# Show one warning for each rule method that Enzyme applies through `typeegal_fallback_sig`.
-function warn_typeegal_fallback(@nospecialize(meth))
-    meth isa Method || return nothing
-    first = @lock TYPEEGAL_FALLBACK_LOCK begin
-        if meth in TYPEEGAL_FALLBACK_WARNED
-            false
-        else
-            push!(TYPEEGAL_FALLBACK_WARNED, meth)
-            true
-        end
-    end
-    if first
-        @safe_warn "This custom rule has a `Const{Type{T}}` argument. On Julia 1.14 and later, the type of `Const(T)` is `Const{Core.TypeEgal{T}}`, and Julia dispatch does not select this rule. Enzyme applies the rule, but a later version can remove this fallback. Write `Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, or `Const{<:Type{T}}` if `T` is a type variable." rule = meth
-    end
-    return nothing
 end
 
 # Find the rule method instance for the rule signature `TT`.
-# On Julia 1.14, a type argument `S` has the annotation `Const{TypeEgal{S}}`. If no rule
-# applies to `TT`, try again with `Const{Type{S}}` (see `typeegal_fallback_sig`), so that
-# rules written for `Const{Type{S}}` before Julia 1.14 apply. Both annotations have the
-# same LLVM layout (one boxed pointer to `S`), so the arguments are the same.
-# Return the method instance (or `nothing`) and the signature that was used.
+# Return the method instance (or `nothing`) and the signature that Enzyme must use for the
+# call. The signature is `TT`, or the result of `select_rule_signature`.
 function rule_methodinstance(
         @nospecialize(mode::Union{EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}),
         @nospecialize(functy::Type), @nospecialize(TT::Type), world::UInt
     )
-    mi = my_methodinstance(mode, functy, TT, world)
-    if mi === nothing
-        TT2 = typeegal_fallback_sig(TT)
-        if TT2 !== nothing
-            mi2 = my_methodinstance(mode, functy, TT2, world)
-            if mi2 !== nothing
-                warn_typeegal_fallback(mi2.def)
-                return mi2, TT2
-            end
+    @static if isdefined(Core, :TypeEgal)
+        relaxed = EnzymeRules._relax_rule_signature(TT)
+        if relaxed !== nothing
+            selected = select_rule_signature(mode, functy, TT, relaxed, world)
+            selected === nothing && return nothing, TT
+            mi = my_methodinstance(mode, functy, selected, world)
+            mi === nothing && return nothing, TT
+            return mi, selected
         end
     end
-    return mi, TT
+    return my_methodinstance(mode, functy, TT, world), TT
 end
 
 @inline function aug_fwd_mi(

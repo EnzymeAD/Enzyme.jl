@@ -859,49 +859,6 @@ function cached_has_readonly_rule(specTypes::Type, world::UInt)
     return res
 end
 
-# On Julia 1.14, the type of a type argument `S` in `specTypes` is `Core.TypeEgal{S}`.
-# A rule for `Const{Type{S}}` does not match `Annotation{TypeEgal{S}}`. Thus, for each
-# `TypeEgal{S}` argument, the rule check uses `Annotation{<:Type{S}}`. This matches the
-# rules for `Const{TypeEgal{S}}` and the rules for `Const{Type{S}}`. The call site
-# (`rule_methodinstance` in `rules/customrules.jl`) uses `Const{Type{S}}` if no rule for
-# `Const{TypeEgal{S}}` applies. Before Julia 1.14, `is_typeegal` is always false.
-function has_typeegal_param(@nospecialize(TT))::Bool
-    for T in Base.unwrap_unionall(TT).parameters
-        is_typeegal(T) && return true
-    end
-    return false
-end
-
-function annotate_rule_arg(@nospecialize(T))
-    if is_typeegal(T)
-        return Annotation{<:Type{typeegal_parameter(T)}}
-    end
-    return EnzymeRules._annotate(T)
-end
-
-function annotate_rule_tt(@nospecialize(TT0))
-    TT = Base.unwrap_unionall(TT0)
-    ft = TT.parameters[1]
-    fa = is_typeegal(ft) ? Annotation{<:Type{typeegal_parameter(ft)}} : Annotation{ft}
-    tt = Any[]
-    for TTp in TT.parameters[2:end]
-        push!(tt, annotate_rule_arg(Base.rewrap_unionall(TTp, TT0)))
-    end
-    return fa, tt
-end
-
-function has_frule_from_sig_typeegal(@nospecialize(specTypes::Type), world::UInt, method_table)::Bool
-    fa, tt = annotate_rule_tt(specTypes)
-    TT = Tuple{<:EnzymeRules.FwdConfig, fa, Type{<:Annotation}, tt...}
-    return EnzymeRules.isapplicable(EnzymeRules.forward, TT; world, method_table)
-end
-
-function has_rrule_from_sig_typeegal(@nospecialize(specTypes::Type), world::UInt, method_table)::Bool
-    fa, tt = annotate_rule_tt(specTypes)
-    TT = Tuple{<:EnzymeRules.RevConfig, fa, Type{<:Annotation}, tt...}
-    return EnzymeRules.isapplicable(EnzymeRules.augmented_primal, TT; world, method_table)
-end
-
 function cached_has_frule(specTypes::Type, world::UInt, method_table)
     key = (specTypes, world, method_table)
     val = get(FRULE_CACHE, key, nothing)
@@ -913,11 +870,7 @@ function cached_has_frule(specTypes::Type, world::UInt, method_table)
         FRULE_CACHE[key] = false
         return false
     end
-    res = if has_typeegal_param(specTypes)
-        has_frule_from_sig_typeegal(specTypes, world, method_table)
-    else
-        EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
-    end
+    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
     FRULE_CACHE[key] = res
     return res
 end
@@ -933,11 +886,7 @@ function cached_has_rrule(specTypes::Type, world::UInt, method_table)
         RRULE_CACHE[key] = false
         return false
     end
-    res = if has_typeegal_param(specTypes)
-        has_rrule_from_sig_typeegal(specTypes, world, method_table)
-    else
-        EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
-    end
+    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
     RRULE_CACHE[key] = res
     return res
 end

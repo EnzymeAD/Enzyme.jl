@@ -11,6 +11,10 @@ For releases up to and including v0.8.28, see the [GitHub releases](https://gith
 
 - `EnzymeCore.TypeEgal{T}`, the type parameter of `Const(T)` for a type `T`. It is `Core.TypeEgal{T}` on Julia 1.14 and later, and `Type{T}` on earlier versions. In a custom rule, write `::Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, and `::Const{<:Type{T}}` if `T` is a type variable [#4124].
 
+### Changed
+
+- Julia 1.14: `EnzymeRules.has_frule_from_sig` and `EnzymeRules.has_rrule_from_sig` also find a rule that has a `::Const{Type{T}}` argument for a type argument `T` [#4126].
+
 ### Fixed
 
 - `EnzymeRules.has_frule_from_sig` and `EnzymeRules.has_rrule_from_sig` did not find a rule when the signature has `where` variables, for example `Tuple{F, Float64} where {F <: Function}` [#4134].
@@ -19,3 +23,4 @@ For releases up to and including v0.8.28, see the [GitHub releases](https://gith
 
 [#4124]: https://github.com/EnzymeAD/Enzyme.jl/issues/4124
 [#4134]: https://github.com/EnzymeAD/Enzyme.jl/issues/4134
+[#4126]: https://github.com/EnzymeAD/Enzyme.jl/issues/4126

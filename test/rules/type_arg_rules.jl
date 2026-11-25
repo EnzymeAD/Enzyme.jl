@@ -161,3 +161,133 @@ end
         @test autodiff(Forward, both_use, Duplicated(3.0, 1.0))[1] == 5.0
     end
 end
+
+# A rule for all `Const` arguments and a rule for `Const{Type{Float64}}`. The second rule is
+# more specific, so Enzyme uses it. This is the selection of Julia dispatch before Julia 1.14.
+@noinline specific_fn(::Type{T}, x) where {T} = T(2) * x
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(specific_fn)},
+        RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, Ty::Const, x::Annotation
+    )
+    shadow = 1.0e3 * x.dval
+    return EnzymeRules.needs_primal(config) ? Duplicated(2 * x.val, shadow) : shadow
+end
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(specific_fn)},
+        RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, Ty::Const{Type{Float64}}, x::Duplicated{Float64}
+    )
+    shadow = 7.0 * x.dval
+    return EnzymeRules.needs_primal(config) ? Duplicated(2 * x.val, shadow) : shadow
+end
+
+@testset "Rule with Const{Type{T}} is more specific than a rule for all Const" begin
+    specific_f64(x) = specific_fn(Float64, x)
+    specific_f32(x) = specific_fn(Float32, x)
+    @test autodiff(Forward, specific_f64, Duplicated(3.0, 1.0))[1] == 7.0
+    @test autodiff(Forward, specific_f32, Duplicated(3.0, 1.0))[1] == 1.0e3
+end
+
+# A rule with a `Const{Type{T}}` argument and keyword arguments.
+@noinline scale_kw(::Type{T}, x; s = 1.0) where {T} = T(2) * x * s
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(scale_kw)},
+        RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, Ty::Const{Type{Float64}}, x::Duplicated{Float64};
+        s = 1.0
+    )
+    shadow = 11.0 * s * x.dval
+    return EnzymeRules.needs_primal(config) ? Duplicated(2 * x.val * s, shadow) : shadow
+end
+
+@testset "Rule with Const{Type{T}} and keyword arguments" begin
+    kw_default(x) = scale_kw(Float64, x)
+    kw_given(x) = scale_kw(Float64, x; s = 3.0)
+    @test autodiff(Forward, kw_default, Duplicated(3.0, 1.0))[1] == 11.0
+    @test autodiff(Forward, kw_given, Duplicated(3.0, 1.0))[1] == 33.0
+end
+
+@testset "Rule check finds a rule with Const{Type{T}}" begin
+    @test EnzymeRules.has_frule_from_sig(Tuple{typeof(scale_by), Core.Typeof(Float64), Float64})
+    @test EnzymeRules.has_rrule_from_sig(Tuple{typeof(scale_by), Core.Typeof(Float64), Float64})
+    @test EnzymeRules.has_frule_from_sig(Tuple{Core.Typeof(TypeArgCtor), Float64})
+    @test !EnzymeRules.has_frule_from_sig(Tuple{typeof(scale_by), Core.Typeof(Float32), Float64})
+end
+
+# Enzyme shows no warning when it applies a rule with a `Const{Type{T}}` argument.
+@noinline quiet_fn(::Type{T}, x) where {T} = T(2) * x
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(quiet_fn)},
+        RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, Ty::Const{Type{Float64}}, x::Duplicated{Float64}
+    )
+    shadow = 13.0 * x.dval
+    return EnzymeRules.needs_primal(config) ? Duplicated(2 * x.val, shadow) : shadow
+end
+
+@testset "No warning for a rule with Const{Type{T}}" begin
+    quiet_caller(x) = quiet_fn(Float64, x)
+    res = @test_nowarn autodiff(Forward, quiet_caller, Duplicated(3.0, 1.0))
+    @test res[1] == 13.0
+end
+
+@static if isdefined(Core, :TypeEgal)
+    # The same as `TypeArgBoth`, but the rule for `Const{TypeEgal{T}}` is the first definition.
+    struct TypeArgBothRev
+        x::Float64
+    end
+    @noinline both_rev_use(x) = TypeArgBothRev(x).x
+
+    function EnzymeRules.forward(
+            config::EnzymeRules.FwdConfig, ::Const{Core.TypeEgal{TypeArgBothRev}},
+            RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, x::Duplicated{Float64}
+        )
+        shadow = TypeArgBothRev(5.0 * x.dval)
+        return EnzymeRules.needs_primal(config) ? Duplicated(TypeArgBothRev(x.val), shadow) : shadow
+    end
+    function EnzymeRules.forward(
+            config::EnzymeRules.FwdConfig, ::Const{Type{TypeArgBothRev}},
+            RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, x::Duplicated{Float64}
+        )
+        shadow = TypeArgBothRev(1.0e3 * x.dval)
+        return EnzymeRules.needs_primal(config) ? Duplicated(TypeArgBothRev(x.val), shadow) : shadow
+    end
+
+    @testset "Rule for Const{TypeEgal{T}} has priority, first definition" begin
+        @test autodiff(Forward, both_rev_use, Duplicated(3.0, 1.0))[1] == 5.0
+    end
+
+    # One rule with a `Const{Type{T}}` argument and a `Const{TypeEgal{T}}` argument.
+    @noinline mixed_fn(::Type{A}, ::Type{B}, x) where {A, B} = A(2) * B(1) * x
+
+    function EnzymeRules.forward(
+            config::EnzymeRules.FwdConfig, ::Const{typeof(mixed_fn)},
+            RT::Type{<:Union{Duplicated, DuplicatedNoNeed}},
+            A::Const{Type{Float64}}, B::Const{Core.TypeEgal{Int}}, x::Duplicated{Float64}
+        )
+        @assert A.val === Float64
+        @assert B.val === Int
+        shadow = 19.0 * x.dval
+        return EnzymeRules.needs_primal(config) ? Duplicated(2 * x.val, shadow) : shadow
+    end
+    function EnzymeRules.augmented_primal(
+            config::EnzymeRules.RevConfig, ::Const{typeof(mixed_fn)}, RT::Type{<:Active},
+            A::Const{Type{Float64}}, B::Const{Core.TypeEgal{Int}}, x::Active{Float64}
+        )
+        primal = EnzymeRules.needs_primal(config) ? 2 * x.val : nothing
+        return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+    end
+    function EnzymeRules.reverse(
+            config::EnzymeRules.RevConfig, ::Const{typeof(mixed_fn)}, dret::Active, tape,
+            A::Const{Type{Float64}}, B::Const{Core.TypeEgal{Int}}, x::Active{Float64}
+        )
+        return (nothing, nothing, 19.0 * dret.val)
+    end
+
+    @testset "Rule with Const{Type{T}} and Const{TypeEgal{T}} arguments" begin
+        mixed_caller(x) = mixed_fn(Float64, Int, x)
+        @test autodiff(Forward, mixed_caller, Duplicated(3.0, 1.0))[1] == 19.0
+        @test autodiff(Reverse, mixed_caller, Active, Active(3.0))[1][1] == 19.0
+        @test autodiff(Forward, mixed_fn, Const(Float64), Const(Int), Duplicated(3.0, 1.0))[1] == 19.0
+    end
+end

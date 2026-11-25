@@ -73,7 +73,9 @@ function EnzymeRules.forward(config, func::Const{typeof(f)}, RT, ty::Const{Enzym
 ```
 
 On Julia 1.14 and later, `Const{Type{BigFloat}}` is a different type, because `Const` is
-invariant and `Core.TypeEgal{T}` is a strict subtype of `Type{T}`.
+invariant and `Core.TypeEgal{T}` is a strict subtype of `Type{T}`. Enzyme also applies a
+rule with `ty::Const{Type{BigFloat}}`, for rules that were written before Julia 1.14.
+If the two rules exist, Enzyme uses the rule with `EnzymeCore.TypeEgal`.
 
 !!! warning
     `T` must be a fixed type. On Julia 1.14 and later, `Core.TypeEgal` does not accept

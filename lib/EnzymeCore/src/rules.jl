@@ -27,6 +27,10 @@ Valid types for `RT` are:
   - [`EnzymeCore.Const`](@ref)
 
 The return from this function must be a type matching [`forward_rule_return_type`](@ref) when given the `fwdconfig` and `RT`.
+
+If an argument of `f` is a type `T`, its annotation is `Const{EnzymeCore.TypeEgal{T}}`.
+Write `::Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, and `::Const{<:Type{T}}` if `T`
+is a type variable. See [`EnzymeCore.TypeEgal`](@ref).
 """
 function forward end
 
@@ -259,6 +263,8 @@ Must return an [`AugmentedReturn`](@ref) type.
 * The tape can be any type (including `Nothing`), and is preserved for the reverse call.
 
 See [`augmented_rule_return_type`](@ref) for more information.
+
+For an argument of `f` that is a type, see [`EnzymeCore.TypeEgal`](@ref).
 """
 function augmented_primal end
 
@@ -344,7 +350,50 @@ function _annotate(@nospecialize(T))
     else
         # Tuples are covariant, so this matches every annotation of `T`. A free TypeVar
         # here intersected with rule signatures before Julia 1.14, but not since.
-        return Annotation{T}
+        return _annotation_query(Annotation, T)
+    end
+end
+
+# On Julia 1.14, the type of a type value `S` is `Core.TypeEgal{S}`, a strict subtype of
+# `Type{S}`. Before Julia 1.14 it was `Type{S}`, and rules have `Const{Type{S}}` arguments.
+# An annotation is invariant, so `Const{Type{S}}` does not match `Const{TypeEgal{S}}`.
+# `_annotation_query(W, T)` is the type that finds the rules for the two forms: `W{<:Type{S}}`
+# if `T` is `TypeEgal{S}`, and `W{T}` for all other `T`. The rule check (`_rule_query`) and
+# the rule call (`_relax_rule_signature`) use this one function, so that they agree.
+@static if isdefined(Core, :TypeEgal)
+    function _annotation_query(@nospecialize(W), @nospecialize(T))
+        if T isa Core.TypeEgal
+            return W{<:Type{Base.type_parameter(T)}}
+        end
+        return W{T}
+    end
+else
+    _annotation_query(@nospecialize(W), @nospecialize(T)) = W{T}
+end
+
+"""
+    _relax_rule_signature(TT)
+
+`TT` is the tuple type of the arguments of a rule call. Return a copy of `TT` in which
+each `Const{Core.TypeEgal{S}}` is `Const{<:Type{S}}`. Return `nothing` if `TT` has no
+`Const{Core.TypeEgal{S}}`. Before Julia 1.14, the result is always `nothing`.
+"""
+function _relax_rule_signature(@nospecialize(TT::Type))
+    @static if isdefined(Core, :TypeEgal)
+        params = nothing
+        for i in 1:length(TT.parameters)
+            P = TT.parameters[i]
+            if P isa DataType && P <: Const && P.parameters[1] isa Core.TypeEgal
+                if params === nothing
+                    params = collect(Any, TT.parameters)
+                end
+                params[i] = _annotation_query(Const, P.parameters[1])
+            end
+        end
+        params === nothing && return nothing
+        return Tuple{params...}
+    else
+        return nothing
     end
 end
 # Released versions of Enzyme import this function. EnzymeCore uses `_rule_query`.
@@ -375,7 +424,7 @@ function _rule_query(@nospecialize(Config), @nospecialize(TT0))
     for TTp in TT.parameters[2:end]
         push!(tt, _annotate(TTp))
     end
-    query = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    query = Tuple{<:Config, _annotation_query(Annotation, ft), Type{<:Annotation}, tt...}
     return Base.rewrap_unionall(query, TT0)
 end
 
