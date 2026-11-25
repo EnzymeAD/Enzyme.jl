@@ -254,19 +254,21 @@ end
 # A rule compares a type from the differentiated code with a type that the rule names.
 # The two types are the same object, so `===` must be true.
 struct IdentityTag end
-@noinline tagged(@nospecialize(T), x) = x
+# The result is not `x`. If it was, LLVM could replace the result with the argument, and
+# Enzyme would call the rule with a `Const` return type.
+@noinline tagged(@nospecialize(T), x) = 2 * x
 
 function forward(config, ::Const{typeof(tagged)}, ::Type{<:Duplicated}, T::Const, x::Duplicated)
     d = (T.val === IdentityTag || T.val === Float64) ? 17.0 : 99.0
-    return Duplicated(x.val, d * x.dval)
+    return Duplicated(2 * x.val, d * x.dval)
 end
 
 tagged_user(x) = tagged(Base.inferencebarrier(IdentityTag), x)
 tagged_wellknown(x) = tagged(Base.inferencebarrier(Float64), x)
 
 @testset "Object identity in a rule" begin
-    @test Enzyme.autodiff(ForwardWithPrimal, tagged_user, Duplicated(3.0, 1.0)) == (17.0, 3.0)
-    @test Enzyme.autodiff(ForwardWithPrimal, tagged_wellknown, Duplicated(3.0, 1.0)) == (17.0, 3.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, tagged_user, Duplicated(3.0, 1.0)) == (17.0, 6.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, tagged_wellknown, Duplicated(3.0, 1.0)) == (17.0, 6.0)
 end
 
 end # module ForwardRules
