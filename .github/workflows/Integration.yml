@@ -64,6 +64,7 @@ jobs:
           - MatrixAlgebraKit
           - Molly
           - MPI
+          - SpeedyWeather
           - Comrade
           - TensorKit
           - Turing
