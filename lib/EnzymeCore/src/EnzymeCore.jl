@@ -9,6 +9,26 @@ export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
 
+@static if isdefined(Core, :TypeEgal)
+    const TypeEgal = Core.TypeEgal
+else
+    const TypeEgal{T} = Type{T}
+end
+
+"""
+    TypeEgal{T}
+
+The type of the type value `T` in an annotation: `Const(T)` is a `Const{TypeEgal{T}}`.
+`TypeEgal{T}` is `Core.TypeEgal{T}` on Julia 1.14 and later, and `Type{T}` on earlier
+versions.
+
+Use `TypeEgal` for a rule argument that is a constant type. For example, write
+`::Const{EnzymeCore.TypeEgal{BigFloat}}`, not `::Const{Type{BigFloat}}`. On Julia 1.14
+and later, a method with a `Const{Type{BigFloat}}` argument does not apply to
+`Const(BigFloat)`.
+"""
+TypeEgal
+
 """
     congruent(x, y)
 

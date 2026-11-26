@@ -59,4 +59,30 @@ end
     @test_throws Enzyme.Compiler.ReverseRuleReturnError autodiff(Reverse, g_kw, Duplicated(x, dx))
 end
 
+# The data of the struct return is active, but its GC pointers are not. Enzyme
+# does not support this mismatch and must report it as an error.
+@noinline mixed_roots(x, n) = (x, n)
+function forward(config, ::Const{typeof(mixed_roots)}, ::Type, x::Duplicated, n::Const)
+    primal = mixed_roots(x.val, n.val)
+    shadow = (x.dval, n.val)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(primal, shadow)
+    elseif EnzymeRules.needs_shadow(config)
+        return shadow
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+mixed_roots_caller(x, n) = (r = mixed_roots(x, n); r[1] * r[2][1])
+
+@static if VERSION >= v"1.12"
+    @testset "Return Roots Activity Mismatch Error" begin
+        @test_throws Enzyme.Compiler.CallingConventionMismatchError autodiff(
+            Forward, mixed_roots_caller, Duplicated(3.0, 1.0), Const([5])
+        )
+    end
+end
+
 end # RuleReturnErrors

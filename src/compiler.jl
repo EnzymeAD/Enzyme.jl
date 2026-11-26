@@ -5906,15 +5906,30 @@ function lower_convention(
                         nobj = if sretPtr !== nothing
                             obj = emit_allocobj!(builder, jlrettype, "boxunion")
                             llty = convert(LLVMType, jlrettype)
-                            ld = load!(
-                                builder,
-                                llty,
-                                bitcast!(
+                            nroots = UNION_INLINE_ROOTS ? datatype_npointers(jlrettype) : 0
+                            ld = if nroots != 0
+                                # julia#55045: a member with GC pointers is split, its data in
+                                # the union buffer and its pointers in the return roots.
+                                @assert retRootPtr !== nothing
+                                move_sret_tofrom_roots!(
                                     builder,
+                                    llty,
                                     sretPtr,
-                                    LLVM.PointerType(llty, sretPtr.value_type.addrspace),
-                                ),
-                            )
+                                    convert(LLVMType, AnyArray(nroots)),
+                                    retRootPtr,
+                                    RootAndSRetPointerToValue,
+                                )
+                            else
+                                load!(
+                                    builder,
+                                    llty,
+                                    bitcast!(
+                                        builder,
+                                        sretPtr,
+                                        LLVM.PointerType(llty, sretPtr.value_type.addrspace),
+                                    ),
+                                )
+                            end
                             store!(
                                 builder,
                                 ld,
