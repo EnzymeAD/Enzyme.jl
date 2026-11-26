@@ -16,3 +16,4 @@ test/integration/**/Manifest.toml
 .CondaPkg
 array.txt
 
+/deps/bindings/Manifest*.toml
