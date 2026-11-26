@@ -357,13 +357,19 @@ end
 # On Julia 1.14, the type of a type value `S` is `Core.TypeEgal{S}`, a strict subtype of
 # `Type{S}`. Before Julia 1.14 it was `Type{S}`, and rules have `Const{Type{S}}` arguments.
 # An annotation is invariant, so `Const{Type{S}}` does not match `Const{TypeEgal{S}}`.
-# `_annotation_query(W, T)` is the type that finds the rules for the two forms: `W{<:Type{S}}`
-# if `T` is `TypeEgal{S}`, and `W{T}` for all other `T`. The rule check (`_rule_query`) and
-# the rule call (`_relax_rule_signature`) use this one function, so that they agree.
+# `_annotation_query(W, T)` is the type that finds the rules for the two forms:
+# `Union{W{TypeEgal{S}}, W{Type{S}}}` if `T` is `TypeEgal{S}`, and `W{T}` for all other `T`.
+# The rule check (`_rule_query`) and the rule call (`_relax_rule_signature`) use this one
+# function, so that they agree.
+#
+# Do not use `W{<:Type{S}}` for the query. `Union{}` is a subtype of `Type{S}`, thus
+# `W{<:Type{S}}` contains `W{Union{}}`. A rule for `Annotation{<:F}` also contains
+# `W{Union{}}` for each `F`, so the query would find the rules of unrelated functions.
 @static if isdefined(Core, :TypeEgal)
     function _annotation_query(@nospecialize(W), @nospecialize(T))
         if T isa Core.TypeEgal
-            return W{<:Type{Base.type_parameter(T)}}
+            S = Base.type_parameter(T)
+            return Union{W{T}, W{Type{S}}}
         end
         return W{T}
     end
@@ -375,7 +381,7 @@ end
     _relax_rule_signature(TT)
 
 `TT` is the tuple type of the arguments of a rule call. Return a copy of `TT` in which
-each `Const{Core.TypeEgal{S}}` is `Const{<:Type{S}}`. Return `nothing` if `TT` has no
+each `Const{Core.TypeEgal{S}}` is `Union{Const{Core.TypeEgal{S}}, Const{Type{S}}}`. Return `nothing` if `TT` has no
 `Const{Core.TypeEgal{S}}`. Before Julia 1.14, the result is always `nothing`.
 """
 function _relax_rule_signature(@nospecialize(TT::Type))

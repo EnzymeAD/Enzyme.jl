@@ -1467,7 +1467,7 @@ end
 # layout (one pointer to `S`), so the arguments of the call do not change.
 #
 # `relaxed` is `EnzymeRules._relax_rule_signature(TT)`: each `Const{TypeEgal{S}}` of `TT`
-# is `Const{<:Type{S}}`. Find the rule methods that match `relaxed`. For each method,
+# is `Union{Const{TypeEgal{S}}, Const{Type{S}}}`. Find the rule methods that match `relaxed`. For each method,
 # make the signature that the method accepts: `Const{Type{S}}` at the positions where the
 # method has that type, and `TT` at all other positions. Then select one signature:
 # 1. The signature of the more specific method.

@@ -291,3 +291,43 @@ end
         @test autodiff(Forward, mixed_fn, Const(Float64), Const(Int), Duplicated(3.0, 1.0))[1] == 19.0
     end
 end
+
+# A rule for `Annotation{<:F}` contains `Annotation{Union{}}` for each `F`. Enzyme must not
+# apply such a rule to the call of a type that is not related to `F`.
+@noinline unrelated_fn(x) = 2 * x
+
+struct UnrelatedCtor
+    x::Float64
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, fn::FA,
+        RT::Type{<:Union{Duplicated, DuplicatedNoNeed}}, x::Duplicated{Float64}
+    ) where {FA <: Annotation{<:typeof(unrelated_fn)}}
+    shadow = 23.0 * x.dval
+    return EnzymeRules.needs_primal(config) ? Duplicated(2 * x.val, shadow) : shadow
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig, fn::FA, ::Type{<:Active}, x::Active{Float64}
+    ) where {FA <: Annotation{<:typeof(unrelated_fn)}}
+    primal = EnzymeRules.needs_primal(config) ? 2 * x.val : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig, fn::FA, dret::Active, tape, x::Active{Float64}
+    ) where {FA <: Annotation{<:typeof(unrelated_fn)}}
+    return (23.0 * dret.val,)
+end
+
+@testset "Rule for Annotation{<:F} does not apply to the call of a type" begin
+    @noinline unrelated_ctor_use(x) = UnrelatedCtor(3 * x).x
+    @test EnzymeRules.has_frule_from_sig(Tuple{typeof(unrelated_fn), Float64})
+    @test !EnzymeRules.has_frule_from_sig(Tuple{Core.Typeof(UnrelatedCtor), Float64})
+    @test !EnzymeRules.has_rrule_from_sig(Tuple{Core.Typeof(UnrelatedCtor), Float64})
+    @test autodiff(Forward, unrelated_fn, Duplicated(3.0, 1.0))[1] == 23.0
+    @test autodiff(Reverse, unrelated_fn, Active, Active(3.0))[1][1] == 23.0
+    @test autodiff(Forward, unrelated_ctor_use, Duplicated(3.0, 1.0))[1] == 3.0
+    @test autodiff(Reverse, unrelated_ctor_use, Active, Active(3.0))[1][1] == 3.0
+end
