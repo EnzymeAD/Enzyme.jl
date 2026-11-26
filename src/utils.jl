@@ -72,7 +72,7 @@ function unsafe_to_ptr(@nospecialize(val))
 end
 export unsafe_to_ptr
 
-# Record `val` in the table of the compilation `ctx` and return its key, `inserted$<hint>$<id>`;
+# Record `val` in the table of the compilation `ctx` and return its key, `inserted$<id>`;
 # the global `ejl_<key>` then stands for `val`. The table leaves the compilation with the module
 # (`julia_value_table`), and whoever links the module resolves the name: `_thunk` as it hands the
 # module to the JIT, the compilation a host derivative is linked into, or the job a device
@@ -80,9 +80,13 @@ export unsafe_to_ptr
 # address, so it is the same in every session and leaves the address to the resolver. The
 # context roots the values, which keeps their `objectid` unique; should two values still hash
 # alike, the later one gets a suffix.
-function insert_julia_value!(ctx::EnzymeContext, hint::String, @nospecialize(val))::String
+#
+# The key must depend only on `val`. LLVM can fold a comparison of the addresses of two
+# different globals to `false`. Thus one object must have one name in all modules that are
+# linked together, or `===` on the object gives a wrong result.
+function insert_julia_value!(ctx::EnzymeContext, @nospecialize(val))::String
     inserted = ctx.inserted_values
-    base = "inserted\$" * hint * "\$" * string(objectid(val); base = 16)
+    base = "inserted\$" * string(objectid(val); base = 16)
     k = base
     n = 1
     while true
@@ -106,24 +110,18 @@ function setup_global(
         B::LLVM.IRBuilder,
         T_jlvalue::LLVM.StructType,
         world::Union{UInt, Nothing},
-        insert_name_if_not_exists::Union{String, Nothing},
-        k::String,
+        k::Union{String, Nothing},
+        force_inactive::Bool,
         @nospecialize(val),
         enzyme_ctx::Union{EnzymeContext, Nothing},
     )::LLVM.Value
     mod = B.insert_block.parent.parent
     globs = mod.globals
-    if Base.haskey(globs, "ejl_" * k)
-        return globs["ejl_" * k]
-    end
 
-    force_inactive = false
-    if insert_name_if_not_exists isa String
+    if k === nothing
         # The value goes in the table of the compilation the module belongs to.
         enzyme_ctx === nothing && throw(AssertionError("Inserting the Julia value $val needs the context of the compilation"))
-        k = insert_julia_value!(enzyme_ctx, insert_name_if_not_exists, val)
-        # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
-        force_inactive = true
+        k = insert_julia_value!(enzyme_ctx, val)
     end
 
     if Base.haskey(globs, "ejl_" * k)
@@ -157,8 +155,10 @@ function setup_global(
 end
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-# `insert_name_if_not_exists` puts `val` in the table of the compilation `enzyme_ctx` under a
-# name, which the code then refers to (see `insert_julia_value!`).
+# If `insert_name_if_not_exists` is not `nothing`, `val` goes in the table of the compilation
+# `enzyme_ctx` under a name, and the code then refers to that name (see `insert_julia_value!`).
+# A well-known value (`JuliaGlobalNameMap`, `JuliaEnzymeNameMap`) always keeps its well-known
+# name, so that it has only one name.
 function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing} = nothing, enzyme_ctx::Union{EnzymeContext, Nothing} = nothing)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -166,20 +166,23 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 
     world = enzyme_world_if_active()
 
+    # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
+    force_inactive = insert_name_if_not_exists !== nothing
+
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
+            return setup_global(B, T_jlvalue, world, k, force_inactive, val, enzyme_ctx)
         end
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
+            return setup_global(B, T_jlvalue, world, k, force_inactive, val, enzyme_ctx)
         end
     end
 
     if insert_name_if_not_exists !== nothing
-        return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, insert_name_if_not_exists, val, enzyme_ctx)
+        return setup_global(B, T_jlvalue, world, nothing, force_inactive, val, enzyme_ctx)
     end
 
     # XXX: This prevents code from being runtime relocatable

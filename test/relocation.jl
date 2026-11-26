@@ -96,7 +96,7 @@ end
         T_int8 = LLVM.Int8Type()
         mod = LLVM.Module("device")
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
-        key = Enzyme.insert_julia_value!(enzyme_ctx, "device", RelocConst{Float64})
+        key = Enzyme.insert_julia_value!(enzyme_ctx, RelocConst{Float64})
         gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
 
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(LLVM.Int1Type(), [T_prjlvalue, LLVM.Int1Type()]))
