@@ -7,12 +7,15 @@ steps:
           - "1.11"
           - "1.12"
           - "1.13"
-          - "1.14-nightly"
-      adjustments:
-        # Enzyme does not fully support Julia 1.14 yet; show progress without blocking PRs.
-        - with:
-            version: "1.14-nightly"
-          soft_fail: true
+          # Disabled: the CUDA tests fail on every 1.14 build ("emitted function does not
+          # match the derived signature") and the shared cuda queue is saturated.
+          # Re-enable together with the adjustment below once Enzyme supports Julia 1.14.
+          # - "1.14-nightly"
+      # adjustments:
+      #   # Enzyme does not fully support Julia 1.14 yet; show progress without blocking PRs.
+      #   - with:
+      #       version: "1.14-nightly"
+      #     soft_fail: true
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
