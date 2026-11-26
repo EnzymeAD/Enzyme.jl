@@ -12,6 +12,9 @@ using EnzymeCore
     ct = Const(Float64)
     @test ct isa Const{Core.Typeof(Float64)}
     @test ct.val === Float64
+    @test ct isa Const{EnzymeCore.TypeEgal{Float64}}
+    @test EnzymeCore.TypeEgal{Float64} === Core.Typeof(Float64)
+    @test ct isa Const{<:Type{Float64}}
 end
 
 @testset "Active" begin
