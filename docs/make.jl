@@ -54,6 +54,30 @@ if get(ENV, "BUILD_DOCS_NOTEBOOKS", "true") == "true"
     build()
 end
 
+# Generate one release notes page per package from its CHANGELOG.md
+
+using Changelog
+
+const REPO_ROOT = joinpath(@__DIR__, "..")
+mkpath(joinpath(@__DIR__, "src", "release-notes"))
+
+release_notes = Pair{String, String}[
+    "Enzyme" => joinpath(REPO_ROOT, "CHANGELOG.md")
+    "EnzymeCore" => joinpath(REPO_ROOT, "lib", "EnzymeCore", "CHANGELOG.md")
+    "EnzymeTestUtils" => joinpath(REPO_ROOT, "lib", "EnzymeTestUtils", "CHANGELOG.md")
+]
+
+for (name, changelog) in release_notes
+    Changelog.generate(
+        Changelog.Documenter(),
+        changelog,
+        joinpath(@__DIR__, "src", "release-notes", string(name, ".md"));
+        repo = "EnzymeAD/Enzyme.jl",
+        branch = "main",
+    )
+end
+
+release_notes = [name => joinpath("release-notes", string(name, ".md")) for (name, _) in release_notes]
 
 makedocs(;
     modules = [Enzyme, EnzymeCore, EnzymeTestUtils],
@@ -85,6 +109,7 @@ makedocs(;
             "For developers" => "dev_docs.md",
             "Internal API" => "internal_api.md",
         ],
+        "Release notes" => release_notes,
     ],
     doctest = true,
 )

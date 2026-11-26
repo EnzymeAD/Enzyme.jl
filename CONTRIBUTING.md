@@ -22,6 +22,7 @@ Once you have a pull request ready, it is time to submit it. The pull request sh
 - Include a small unit test
 - Not contain any unrelated changes
 - Be an isolated change. Independent changes should be submitted as separate pull requests as this makes reviewing easier.
+- Add an entry to the changelog of the package that you changed if the change is visible to users: [CHANGELOG.md](CHANGELOG.md) for Enzyme, [lib/EnzymeCore/CHANGELOG.md](lib/EnzymeCore/CHANGELOG.md) for EnzymeCore and [lib/EnzymeTestUtils/CHANGELOG.md](lib/EnzymeTestUtils/CHANGELOG.md) for EnzymeTestUtils. Put the entry in the `Unreleased` section. Refer to the pull request as `[#1234]`, then run `julia --project=docs docs/changelog.jl` to update the link lists.
 
 ## Code of Conduct
 

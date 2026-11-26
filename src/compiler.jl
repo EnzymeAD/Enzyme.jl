@@ -192,6 +192,99 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
 # both majors; every version split below keys on this one probe.
 const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
 
+@static if HAS_GPUCOMPILER_2
+    # Short, deterministic names of the annotations, for `relocation_namespace`.
+    function annotation_tag(@nospecialize(T))
+        T = Base.unwrap_unionall(T)
+        T isa DataType || return "U"
+        name = nameof(T)
+        name === :Const && return "C"
+        name === :Active && return "A"
+        name === :Duplicated && return "D"
+        name === :DuplicatedNoNeed && return "N"
+        name === :BatchDuplicated && return "B"
+        name === :BatchDuplicatedNoNeed && return "b"
+        name === :MixedDuplicated && return "M"
+        name === :BatchMixedDuplicated && return "m"
+        return string(name)
+    end
+
+    # The word for a derivative mode, for `relocation_namespace`. The values are those of
+    # `CDerivativeMode` in Enzyme's CApi.h, which also has the two forward split modes.
+    function mode_word(mode::API.CDerivativeMode)
+        m = Int(mode)
+        m == 0 && return "fwd"
+        m == 1 && return "aug"
+        m == 2 && return "grad"
+        m == 3 && return "rev"
+        m == 4 && return "fwdsplit"
+        m == 5 && return "fwderr"
+        return "mode" * string(m)
+    end
+
+    # The bits as hex digits, as `hexMask` in Enzyme's GradientUtils.cpp: bit i is argument i,
+    # 4 bits per digit, lowest index first, trailing '0' digits removed.
+    function hex_mask(bits)
+        io = IOBuffer()
+        nibble = 0
+        j = 0
+        for bit in bits
+            if bit
+                nibble |= 1 << j
+            end
+            j += 1
+            if j == 4
+                print(io, "0123456789abcdef"[nibble + 1])
+                nibble = 0
+                j = 0
+            end
+        end
+        if j != 0
+            print(io, "0123456789abcdef"[nibble + 1])
+        end
+        return String(rstrip(String(take!(io)), '0'))
+    end
+
+    # GPUCompiler gives the names of a job (relocation slots, and the entry of a nested module
+    # in `nested_codegen!`) its `relocation_namespace`, which is the mangled signature. Enzyme
+    # can compile one signature with different options, so add the options to the namespace.
+    # The result must be the same in each session, so it does not use `hash` or the world.
+    # Where the options overlap, the tokens are those of the names of separately compiled
+    # derivatives in Enzyme (`GradientUtils::externalShadowName`, EnzymeAD/Enzyme#3383).
+    function GPUCompiler.relocation_namespace(
+            @nospecialize(job::CompilerJob{<:Any, PrimalCompilerParams})
+        )
+        default = invoke(GPUCompiler.relocation_namespace, Tuple{CompilerJob}, job)
+        return default * "_primal_" * mode_word(job.config.params.mode)
+    end
+
+    function GPUCompiler.relocation_namespace(
+            @nospecialize(job::CompilerJob{<:Any, <:EnzymeCompilerParams})
+        )
+        default = invoke(GPUCompiler.relocation_namespace, Tuple{CompilerJob}, job)
+        params = job.config.params
+        io = IOBuffer()
+        print(io, default, "_", mode_word(params.mode), "_w", params.width)
+        params.runtimeActivity && print(io, "_ra")
+        params.strongZero && print(io, "_sz")
+        # The options below exist only in Enzyme.jl.
+        print(io, "_r", annotation_tag(params.rt), "_a")
+        for T in params.TT.parameters
+            print(io, annotation_tag(T))
+        end
+        print(io, "_", nameof(params.ABI))
+        params.returnPrimal && print(io, "_rp")
+        params.shadowInit && print(io, "_si")
+        params.abiwrap && print(io, "_aw")
+        params.err_if_func_written && print(io, "_ew")
+        params.run_enzyme || print(io, "_norun")
+        # The arguments that are not overwritten between the forward and the reverse pass.
+        mask = hex_mask(map(!, params.modifiedBetween))
+        isempty(mask) || print(io, "_o", mask)
+        return String(take!(io))
+    end
+end
+
 # GPUCompiler 1.x names the runtime library per back-end; 2.x derives it from the cache owner.
 @static if !HAS_GPUCOMPILER_2
     # TODO: encode debug build or not in the compiler job
@@ -2141,12 +2234,34 @@ function nested_codegen!(
     if DumpPostNestedOpt[]
         API.EnzymeDumpModuleRef(otherMod.ref)
     end
+    lfn = otherMod.functions[entry]
+
+    # The declaration below is bound to this definition by name when the modules are linked.
+    # Since julia#60031, Julia's counters are local to the module, so Julia's name can also be
+    # the entry of another nested module, or a function of `mod`. Add GPUCompiler's namespace
+    # of the job to the name: the mangled signature and the Enzyme options (see the
+    # `relocation_namespace` methods above).
+    # GPUCompiler 1.x only supports Julia versions where Julia's names are unique in the
+    # session.
+    @static if HAS_GPUCOMPILER_2
+        entry = entry * "_" * GPUCompiler.relocation_namespace(job)
+        LLVM.name!(lfn, entry)
+    end
+    # The entry is all that `mod` refers to. Everything else the module defines keeps the names
+    # Julia gave it, which other modules reuse (e.g. the slot `ccall_jl_n_threads_per_pool_0`
+    # of a `ccall`), so make it local to the module. The Julia values it refers to by name are
+    # declarations (see `make_slots_symbolic!`), and stay external.
+    for gv in Iterators.flatten((otherMod.functions, otherMod.globals))
+        (gv == lfn || isdeclaration(gv)) && continue
+        if !(gv.linkage in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage))
+            gv.linkage = LLVM.API.LLVMInternalLinkage
+        end
+    end
 
     # 4) Record module to link
     push!(enzyme_ctx.modules_to_link, otherMod)
 
     # Declare the function in mod so it can be called
-    lfn = otherMod.functions[entry]
     if alwaysinline
         # A method declared `@noinline` carries that attribute. Remove it: this
         # path always inlines, and `noinline` conflicts with `alwaysinline`.
@@ -2157,6 +2272,7 @@ function nested_codegen!(
     lfn.linkage = LLVM.Linkage.External
     FT = lfn.function_type
     decl = LLVM.Function(mod, entry, FT)
+    @assert LLVM.name(decl) == entry
 
     # Copy function, parameter and return attributes
     append!(decl.function_attributes, lfn.function_attributes)
@@ -6138,8 +6254,7 @@ function lower_convention(
     end
 
 
-    remove_alwaysinline_roots!(mod)
-    run!(AlwaysInlinerPass(), mod)
+    run_alwaysinliner!(mod)
     if !hasReturnsTwice
         delete!(wrapper_f.function_attributes, :returns_twice)
     end
@@ -6615,8 +6730,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
             end
         end
 
-        remove_alwaysinline_roots!(mod)
-        run!(AlwaysInlinerPass(), mod)
+        run_alwaysinliner!(mod)
         for fname in toremove
             if haskey(mod.functions, fname)
                 f = mod.functions[fname]
@@ -7252,8 +7366,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                 push!(toremove, f.name)
             end
         end
-        remove_alwaysinline_roots!(mod)
-        run!(AlwaysInlinerPass(), mod)
+        run_alwaysinliner!(mod)
         for fname in toremove
             if haskey(mod.functions, fname)
                 f = mod.functions[fname]
@@ -7348,8 +7461,6 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     adjointf = mod.functions[adjointf_name]
 
-    # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
-
     push!(adjointf.function_attributes, EnumAttribute(:alwaysinline))
     if augmented_primalf !== nothing
         augmented_primalf = mod.functions[augmented_primalf_name]
@@ -7361,10 +7472,41 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
         isempty(fn.blocks) && continue
         fn.linkage = LLVM.Linkage.LinkerPrivate
     end
+    # The same goes for the globals the module defines: their names come from counters that
+    # are local to the module since julia#60031, so another thunk linked next to this one can
+    # define the same name (e.g. the slot `ccall_jl_n_threads_per_pool_0` of a `ccall`). The
+    # Julia values the module refers to by name are declarations (see `make_slots_symbolic!`).
+    # A compilation that imports this thunk (see `import_cached_autodiff!`) also needs the
+    # definitions: its JITDylib does not resolve the names that this thunk defines.
+    # Device modules keep theirs: GPUCompiler binds its relocation records to them by name.
+    if !device_module
+        for gv in mod.globals
+            isdeclaration(gv) && continue
+            gv.linkage in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage) && continue
+            gv.linkage = LLVM.API.LLVMInternalLinkage
+        end
+    end
 
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
+    # The job that requested this derivative links this module into its own module, and finds
+    # the entry there by name. It does the same for each derivative that it requested. Since
+    # julia#60031, the counters in Julia's names are local to the module, so two derivatives of
+    # one function have the same names (for example the two halves of a split derivative, which
+    # are two jobs that each define the two functions). Make the function that is not the entry
+    # local to the module. Add the namespace of the job to the name of the entry: the mangled
+    # signature and the options of Enzyme (see the `relocation_namespace` methods above).
+    # GPUCompiler 1.x only supports Julia versions where Julia's names are unique in the session.
+    @static if HAS_GPUCOMPILER_2
+        if !job.config.toplevel
+            other = use_primal ? adjointf : augmented_primalf
+            if other !== nothing
+                other.linkage = LLVM.Linkage.LinkerPrivate
+            end
+            LLVM.name!(entry, LLVM.name(entry) * "_" * GPUCompiler.relocation_namespace(job))
+        end
+    end
     # A derivative compiled on behalf of another job is linked into it here. A toplevel one is
     # linked by `_thunk`, once it has kept the symbolic bitcode. A host derivative's inserted
     # values are handed on with the module (`compile_unhooked`).
