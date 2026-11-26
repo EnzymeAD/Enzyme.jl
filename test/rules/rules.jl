@@ -228,6 +228,29 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+# Rules that have a type as an argument. `conv_fixed` uses the fixed-type form
+# and `conv_generic` uses the type-variable form.
+@noinline conv_fixed(T, x) = convert(T, x)^2
+@noinline conv_generic(T, x) = convert(T, x)^2
+
+function forward(config, ::Const{typeof(conv_fixed)}, ::Type{<:Duplicated}, ::Const{Enzyme.EnzymeCore.TypeEgal{Float64}}, x::Duplicated)
+    return Duplicated(conv_fixed(Float64, x.val), 100.0 * x.dval)
+end
+
+function forward(config, ::Const{typeof(conv_generic)}, ::Type{<:Duplicated}, ::Const{<:Type{T}}, x::Duplicated) where {T <: AbstractFloat}
+    return Duplicated(conv_generic(T, x.val), 100.0 * x.dval)
+end
+
+conv_fixed_caller(x) = conv_fixed(Float64, x)
+conv_generic_caller(x) = conv_generic(Float64, x)
+
+@testset "Type argument" begin
+    @test Enzyme.autodiff(ForwardWithPrimal, conv_fixed, Const(Float64), Duplicated(3.0, 1.0)) == (100.0, 9.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, conv_generic, Const(Float64), Duplicated(3.0, 1.0)) == (100.0, 9.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, conv_fixed_caller, Duplicated(3.0, 1.0)) == (100.0, 9.0)
+    @test Enzyme.autodiff(ForwardWithPrimal, conv_generic_caller, Duplicated(3.0, 1.0)) == (100.0, 9.0)
+end
+
 # A rule compares a type from the differentiated code with a type that the rule names.
 # The two types are the same object, so `===` must be true.
 struct IdentityTag end

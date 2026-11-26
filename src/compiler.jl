@@ -7434,8 +7434,6 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     adjointf = mod.functions[adjointf_name]
 
-    # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
-
     push!(adjointf.function_attributes, EnumAttribute(:alwaysinline))
     if augmented_primalf !== nothing
         augmented_primalf = mod.functions[augmented_primalf_name]

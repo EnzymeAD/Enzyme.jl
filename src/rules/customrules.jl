@@ -1461,6 +1461,81 @@ end
     return false
 end
 
+# On Julia 1.14, a type argument `S` has the annotation `Const{TypeEgal{S}}`. A rule that
+# was written before Julia 1.14 has a `Const{Type{S}}` argument. `TypeEgal{S}` is a subtype
+# of `Type{S}`, thus Enzyme also applies such a rule. The two annotations have the same
+# layout (one pointer to `S`), so the arguments of the call do not change.
+#
+# `relaxed` is `EnzymeRules._relax_rule_signature(TT)`: each `Const{TypeEgal{S}}` of `TT`
+# is `Union{Const{TypeEgal{S}}, Const{Type{S}}}`. Find the rule methods that match `relaxed`. For each method,
+# make the signature that the method accepts: `Const{Type{S}}` at the positions where the
+# method has that type, and `TT` at all other positions. Then select one signature:
+# 1. The signature of the more specific method.
+# 2. If no method is more specific, the signature with fewer `Const{Type{S}}` positions.
+#    Thus a rule for `Const{TypeEgal{S}}` has priority over the same rule for `Const{Type{S}}`.
+# Return `nothing` if no method matches.
+@static if isdefined(Core, :TypeEgal)
+    function select_rule_signature(
+            @nospecialize(mode::Union{EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}),
+            @nospecialize(functy::Type), @nospecialize(TT::Type), @nospecialize(relaxed::Type),
+            world::UInt
+        )
+        interp = Compiler.primal_interp_world(mode, world)
+        sig = Tuple{functy, relaxed.parameters...}
+        result = Core.Compiler.findall(sig, Core.Compiler.method_table(interp); limit = -1)
+        (result === nothing || result === missing) && return nothing
+
+        best = nothing
+        best_sig = nothing
+        best_legacy = 0
+        for match in result.matches
+            match = match::Core.MethodMatch
+            spec = Base.unwrap_unionall(match.spec_types)
+            params = collect(Any, TT.parameters)
+            legacy = 0
+            for i in 1:length(params)
+                relaxed.parameters[i] === params[i] && continue
+                # The first parameter of `spec` is the type of the rule function.
+                length(spec.parameters) > i || continue
+                S = spec.parameters[i + 1]
+                if S isa DataType && isconcretetype(S) && S !== params[i]
+                    params[i] = S
+                    legacy += 1
+                end
+            end
+            method_sig = match.method.sig
+            Tuple{functy, params...} <: method_sig || continue
+            if best === nothing || Base.morespecific(method_sig, best_sig) ||
+                    (legacy < best_legacy && !Base.morespecific(best_sig, method_sig))
+                best = Tuple{params...}
+                best_sig = method_sig
+                best_legacy = legacy
+            end
+        end
+        return best
+    end
+end
+
+# Find the rule method instance for the rule signature `TT`.
+# Return the method instance (or `nothing`) and the signature that Enzyme must use for the
+# call. The signature is `TT`, or the result of `select_rule_signature`.
+function rule_methodinstance(
+        @nospecialize(mode::Union{EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}),
+        @nospecialize(functy::Type), @nospecialize(TT::Type), world::UInt
+    )
+    @static if isdefined(Core, :TypeEgal)
+        relaxed = EnzymeRules._relax_rule_signature(TT)
+        if relaxed !== nothing
+            selected = select_rule_signature(mode, functy, TT, relaxed, world)
+            selected === nothing && return nothing, TT
+            mi = my_methodinstance(mode, functy, selected, world)
+            mi === nothing && return nothing, TT
+            return mi, selected
+        end
+    end
+    return my_methodinstance(mode, functy, TT, world), TT
+end
+
 @inline function aug_fwd_mi(
         orig::LLVM.CallInst,
         gutils::GradientUtils,
@@ -1521,7 +1596,7 @@ end
         typeof(EnzymeRules.augmented_primal)
     end
 
-    ami = my_methodinstance(Reverse, functy, augprimal_TT, world)
+    ami, augprimal_TT = rule_methodinstance(Reverse, functy, augprimal_TT, world)
     if ami === nothing
         augprimal_TT = Tuple{typeof(world), functy, augprimal_TT.parameters...}
         ami = my_methodinstance(
@@ -1611,7 +1686,7 @@ end
         typeof(EnzymeRules.forward)
     end
     @safe_debug "Applying custom forward rule" TT = TT, functy = functy
-    fmi = my_methodinstance(Forward, functy, TT, world)
+    fmi, TT = rule_methodinstance(Forward, functy, TT, world)
     if fmi === nothing
         TT = Tuple{typeof(world), functy, TT.parameters...}
         fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)
@@ -1919,7 +1994,7 @@ function enzyme_custom_common_rev(
         end
 
         @safe_debug "Applying custom reverse rule" TT = rev_TT, functy = functy
-        rmi = my_methodinstance(Reverse, functy, rev_TT, world)
+        rmi, rev_TT = rule_methodinstance(Reverse, functy, rev_TT, world)
 
         if rmi === nothing
             rev_TT = Tuple{typeof(world), functy, rev_TT.parameters...}

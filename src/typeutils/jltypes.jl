@@ -539,11 +539,7 @@ function get_return_info(
 end
 
 # Julia 1.14 (julia#62001): only `Core.TypeEgal{T}` is a ghost in specsig; `Type{T}` is boxed.
-@static if isdefined(Core, :TypeEgal)
-    import Core: TypeEgal
-else
-    const TypeEgal{T} = Type{T}
-end
+import EnzymeCore: TypeEgal
 
 # From https://github.com/JuliaLang/julia/blob/81813164963f38dcd779d65ecd222fad8d7ed437/src/cgutils.cpp#L570
 @inline function isghostty(@nospecialize(ty))

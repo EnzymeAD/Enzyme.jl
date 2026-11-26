@@ -295,4 +295,9 @@ end
             end
         end
     end
+
+    @testset "type as an argument" begin
+        f_type_arg_fwd(::Type{T}, x) where {T} = T(2) * x^2
+        test_forward(f_type_arg_fwd, Duplicated, (Float64, Const), (3.0, Duplicated))
+    end
 end

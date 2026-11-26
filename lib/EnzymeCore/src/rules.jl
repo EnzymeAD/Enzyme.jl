@@ -27,6 +27,10 @@ Valid types for `RT` are:
   - [`EnzymeCore.Const`](@ref)
 
 The return from this function must be a type matching [`forward_rule_return_type`](@ref) when given the `fwdconfig` and `RT`.
+
+If an argument of `f` is a type `T`, its annotation is `Const{EnzymeCore.TypeEgal{T}}`.
+Write `::Const{EnzymeCore.TypeEgal{T}}` for a fixed type `T`, and `::Const{<:Type{T}}` if `T`
+is a type variable. See [`EnzymeCore.TypeEgal`](@ref).
 """
 function forward end
 
@@ -259,6 +263,8 @@ Must return an [`AugmentedReturn`](@ref) type.
 * The tape can be any type (including `Nothing`), and is preserved for the reverse call.
 
 See [`augmented_rule_return_type`](@ref) for more information.
+
+For an argument of `f` that is a type, see [`EnzymeCore.TypeEgal`](@ref).
 """
 function augmented_primal end
 
@@ -344,9 +350,59 @@ function _annotate(@nospecialize(T))
     else
         # Tuples are covariant, so this matches every annotation of `T`. A free TypeVar
         # here intersected with rule signatures before Julia 1.14, but not since.
-        return Annotation{T}
+        return _annotation_query(Annotation, T)
     end
 end
+
+# On Julia 1.14, the type of a type value `S` is `Core.TypeEgal{S}`, a strict subtype of
+# `Type{S}`. Before Julia 1.14 it was `Type{S}`, and rules have `Const{Type{S}}` arguments.
+# An annotation is invariant, so `Const{Type{S}}` does not match `Const{TypeEgal{S}}`.
+# `_annotation_query(W, T)` is the type that finds the rules for the two forms:
+# `Union{W{TypeEgal{S}}, W{Type{S}}}` if `T` is `TypeEgal{S}`, and `W{T}` for all other `T`.
+# The rule check (`_rule_query`) and the rule call (`_relax_rule_signature`) use this one
+# function, so that they agree.
+#
+# Do not use `W{<:Type{S}}` for the query. `Union{}` is a subtype of `Type{S}`, thus
+# `W{<:Type{S}}` contains `W{Union{}}`. A rule for `Annotation{<:F}` also contains
+# `W{Union{}}` for each `F`, so the query would find the rules of unrelated functions.
+@static if isdefined(Core, :TypeEgal)
+    function _annotation_query(@nospecialize(W), @nospecialize(T))
+        if T isa Core.TypeEgal
+            S = Base.type_parameter(T)
+            return Union{W{T}, W{Type{S}}}
+        end
+        return W{T}
+    end
+else
+    _annotation_query(@nospecialize(W), @nospecialize(T)) = W{T}
+end
+
+"""
+    _relax_rule_signature(TT)
+
+`TT` is the tuple type of the arguments of a rule call. Return a copy of `TT` in which
+each `Const{Core.TypeEgal{S}}` is `Union{Const{Core.TypeEgal{S}}, Const{Type{S}}}`. Return `nothing` if `TT` has no
+`Const{Core.TypeEgal{S}}`. Before Julia 1.14, the result is always `nothing`.
+"""
+function _relax_rule_signature(@nospecialize(TT::Type))
+    @static if isdefined(Core, :TypeEgal)
+        params = nothing
+        for i in 1:length(TT.parameters)
+            P = TT.parameters[i]
+            if P isa DataType && P <: Const && P.parameters[1] isa Core.TypeEgal
+                if params === nothing
+                    params = collect(Any, TT.parameters)
+                end
+                params[i] = _annotation_query(Const, P.parameters[1])
+            end
+        end
+        params === nothing && return nothing
+        return Tuple{params...}
+    else
+        return nothing
+    end
+end
+# Released versions of Enzyme import this function. EnzymeCore uses `_rule_query`.
 function _annotate_tt(@nospecialize(TT0))
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
@@ -357,14 +413,34 @@ function _annotate_tt(@nospecialize(TT0))
     return ft, tt
 end
 
+"""
+    _rule_query(Config, TT)
+
+Return the argument tuple type that finds the rules for the primal signature `TT`.
+`Config` is `FwdConfig` or `RevConfig`.
+
+`TT` can have `where` variables, for example `Tuple{F, Float64} where {F <: Function}`.
+The result has the same variables around the full tuple. Thus a variable has the same
+value at each position, and the result has no free type variable.
+"""
+function _rule_query(@nospecialize(Config), @nospecialize(TT0))
+    TT = Base.unwrap_unionall(TT0)
+    ft = TT.parameters[1]
+    tt = []
+    for TTp in TT.parameters[2:end]
+        push!(tt, _annotate(TTp))
+    end
+    query = Tuple{<:Config, _annotation_query(Annotation, ft), Type{<:Annotation}, tt...}
+    return Base.rewrap_unionall(query, TT0)
+end
+
 function has_frule_from_sig(
         @nospecialize(TT);
         world::UInt = Base.get_world_counter(),
         method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
         caller::Union{Nothing, Core.MethodInstance} = nothing
     )::Bool
-    ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = _rule_query(FwdConfig, TT)
     return isapplicable(forward, TT; world, method_table, caller)
 end
 
@@ -374,8 +450,7 @@ function has_rrule_from_sig(
         method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
         caller::Union{Nothing, Core.MethodInstance} = nothing
     )::Bool
-    ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = _rule_query(RevConfig, TT)
     return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
