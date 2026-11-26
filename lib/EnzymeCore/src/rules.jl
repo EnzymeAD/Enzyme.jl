@@ -347,6 +347,7 @@ function _annotate(@nospecialize(T))
         return Annotation{T}
     end
 end
+# Released versions of Enzyme import this function. EnzymeCore uses `_rule_query`.
 function _annotate_tt(@nospecialize(TT0))
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
@@ -357,14 +358,34 @@ function _annotate_tt(@nospecialize(TT0))
     return ft, tt
 end
 
+"""
+    _rule_query(Config, TT)
+
+Return the argument tuple type that finds the rules for the primal signature `TT`.
+`Config` is `FwdConfig` or `RevConfig`.
+
+`TT` can have `where` variables, for example `Tuple{F, Float64} where {F <: Function}`.
+The result has the same variables around the full tuple. Thus a variable has the same
+value at each position, and the result has no free type variable.
+"""
+function _rule_query(@nospecialize(Config), @nospecialize(TT0))
+    TT = Base.unwrap_unionall(TT0)
+    ft = TT.parameters[1]
+    tt = []
+    for TTp in TT.parameters[2:end]
+        push!(tt, _annotate(TTp))
+    end
+    query = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    return Base.rewrap_unionall(query, TT0)
+end
+
 function has_frule_from_sig(
         @nospecialize(TT);
         world::UInt = Base.get_world_counter(),
         method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
         caller::Union{Nothing, Core.MethodInstance} = nothing
     )::Bool
-    ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = _rule_query(FwdConfig, TT)
     return isapplicable(forward, TT; world, method_table, caller)
 end
 
@@ -374,8 +395,7 @@ function has_rrule_from_sig(
         method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
         caller::Union{Nothing, Core.MethodInstance} = nothing
     )::Bool
-    ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = _rule_query(RevConfig, TT)
     return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
