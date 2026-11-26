@@ -59,33 +59,7 @@ end
     $(Expr(:meta, :generated, Compiler.thunk_generator))
 end
 
-@eval @inline function Compiler.deferred_id_codegen(
-        fa::Type{FA},
-        a::Type{A},
-        tt::Type{TT},
-        mode::Val{Mode},
-        width::Val{Width},
-        modifiedbetween::Val{ModifiedBetween},
-        returnprimal::Val{ReturnPrimal},
-        shadowinit::Val{ShadowInit},
-        expectedtapetype::Type{ExpectedTapeType},
-        erriffuncwritten::Val{ErrIfFuncWritten},
-        runtimeactivity::Val{RuntimeActivity},
-        strongzero::Val{StrongZero}
-    ) where {
-        FA <: Annotation,
-        A <: Annotation,
-        TT,
-        Mode,
-        Width,
-        ModifiedBetween,
-        ReturnPrimal,
-        ShadowInit,
-        ExpectedTapeType,
-        ErrIfFuncWritten,
-        RuntimeActivity,
-        StrongZero,
-    }
+@eval @inline function Compiler.deferred_check(spec::Val{S}) where {S}
     $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, Compiler.deferred_id_generator))
+    $(Expr(:meta, :generated, Compiler.deferred_check_generator))
 end

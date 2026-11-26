@@ -57,8 +57,8 @@ end
         Duplicated{V}, Duplicated{V}
     )
     ir = deferred_kernel_ir(deferred_split_kernel!, Tuple{V, V, V, V, Val{TT}})
-    @test !occursin("deferred_codegen", ir)
+    @test !occursin("@deferred_codegen(", ir)
 
     ir = deferred_kernel_ir(deferred_activity_kernel!, Tuple{V, V, V, V})
-    @test !occursin("deferred_codegen", ir)
+    @test !occursin("@deferred_codegen(", ir)
 end

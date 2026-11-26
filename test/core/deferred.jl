@@ -1,8 +1,9 @@
 using Enzyme, Test
 using Enzyme: API
-using Enzyme.Compiler: DeferredSpec, deferred_id, DeferredOnHostError, DEFERRED_SPECS,
-    rebuild_deferred_registry!, UnknownTapeType
+using Enzyme.Compiler: DeferredSpec, DeferredOnHostError, UnknownTapeType
 const GPUCompiler = Enzyme.Compiler.GPUCompiler
+
+deferred_square(x) = x * x
 
 @testset "deferred" begin
 
@@ -19,54 +20,36 @@ const GPUCompiler = Enzyme.Compiler.GPUCompiler
             ReverseSplitWithPrimal, TapeType, Const{typeof(dot2)}, Active, Duplicated{typeof(A)}
         )
 
+        # Invalid requests raise their error before the host check.
+        @test_throws MethodError autodiff_deferred(Reverse, Const(dot2), Active, Active(1.0), Active(2.0))
+
         # The host entry points do the job.
         @test autodiff(ReverseWithPrimal, dot2, Active, Duplicated(A, dA))[2] == 34.0
         @test dA == [6.0, 10.0]
     end
 
-    @testset "Ids derive from the specification" begin
-        make_spec(width) = DeferredSpec(
-            Const{typeof(sin)}, Active, Tuple{Active{Float64}}, API.DEM_ReverseModeCombined,
-            width, (false, false), false, false, UnknownTapeType, false, false, false,
+    @testset "Requests are specified at the type level" begin
+        spec = Enzyme.Compiler.deferred_spec(
+            Const{typeof(deferred_square)}, Active, Tuple{Active{Float64}},
+            Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false),
+            Val(false), UnknownTapeType, Val(false), Val(false), Val(false),
         )
-        id = deferred_id(make_spec(1))
-        @test id > 0
-        @test deferred_id(make_spec(1)) == id
-        @test deferred_id(make_spec(2)) != id
-        # Never one of GPUCompiler's own ids; the twin id is distinct and keeps that bit.
-        @test reinterpret(UInt, id) & Enzyme.Compiler.DEFERRED_ID_BIT != 0
-        twin = Enzyme.Compiler.deferred_twin_id(id)
-        @test twin != id
-        @test reinterpret(UInt, twin) & Enzyme.Compiler.DEFERRED_ID_BIT != 0
-        @test Enzyme.Compiler.deferred_twin_id(twin) == id
+        @test spec isa Val
+        S = typeof(spec).parameters[1]
+        @test S <: DeferredSpec
 
-        # Another session derives the same id.
-        code = """
-        using Enzyme
-        using Enzyme: API
-        using Enzyme.Compiler: DeferredSpec, deferred_id, UnknownTapeType
-        print(deferred_id(DeferredSpec(
-            Const{typeof(sin)}, Active, Tuple{Active{Float64}}, API.DEM_ReverseModeCombined,
-            1, (false, false), false, false, UnknownTapeType, false, false, false,
-        )))
-        """
-        cmd = `$(Base.julia_cmd()) --project=$(Base.active_project()) --startup-file=no -e $code`
-        @test parse(Int, read(cmd, String)) == id
-    end
+        # Nothing is registered with GPUCompiler while inferring or running the request.
+        n = length(GPUCompiler.deferred_codegen_jobs)
+        @test_throws DeferredOnHostError autodiff_deferred(Reverse, Const(deferred_square), Active, Active(2.0))
+        @test length(GPUCompiler.deferred_codegen_jobs) == n
 
-    @testset "Registry rebuild" begin
-        ids = collect(keys(DEFERRED_SPECS))
-        @test !isempty(ids)
-        for id in ids
-            delete!(GPUCompiler.deferred_codegen_jobs, id)
-        end
-        @test rebuild_deferred_registry!() >= length(ids)
-        for id in ids
-            @test GPUCompiler.deferred_codegen_jobs[id] isa GPUCompiler.CompilerJob
-            # Both markers of a call site resolve to one job.
-            @test GPUCompiler.deferred_codegen_jobs[Enzyme.Compiler.deferred_twin_id(id)] ===
-                GPUCompiler.deferred_codegen_jobs[id]
-        end
+        # GPUCompiler creates the job from the specification when it compiles the request.
+        world = Base.get_world_counter()
+        job = Enzyme.Compiler.deferred_job(S, world)
+        @test job isa GPUCompiler.CompilerJob
+        @test job.source.specTypes == Tuple{typeof(deferred_square), Float64}
+        @test !job.config.kernel
+        @test GPUCompiler.deferred_job(S, job) isa GPUCompiler.CompilerJob
     end
 
     @testset "Deferred upgrade" begin
