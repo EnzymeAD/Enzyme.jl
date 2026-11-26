@@ -852,3 +852,34 @@ inline_same_pair(p) = inline_same.(p)
         @test all(all(dt.data ≈ 2 .* t.data for (t, dt) in zip(p, dp)) for (p, dp) in zip(x, dx))
     end
 end
+
+absint_findall(v) = findall(>(0.5), v)
+absint_sortperm(v) = sortperm(v; rev = true)[1:2]
+absint_sortperm_inactive(v) = sortperm(v; rev = true)[1:2]
+Enzyme.EnzymeRules.inactive(::typeof(absint_sortperm_inactive), args...) = true
+@noinline absint_with_ind(pick, v) = (ind = pick(v); (v[ind], ind))
+absint_sum_with_ind(pick, v) = sum(absint_with_ind(pick, v)[1])
+
+@testset "Absint return type of julia call returning integer array" begin
+    v = [1.0, 0.2, 0.9]
+    dv = [1.0, 2.0, 3.0]
+    for pick in (absint_findall, absint_sortperm, absint_sortperm_inactive)
+        res = autodiff(Forward, absint_with_ind, Duplicated, Const(pick), Duplicated(v, dv))[1]
+        @test res[1] ≈ [1.0, 3.0]
+        @test res[2] == [1, 3]
+        res = autodiff(Forward, absint_with_ind, BatchDuplicated, Const(pick), BatchDuplicated(v, (dv, 2dv)))[1]
+        @test res[1][1] ≈ [1.0, 3.0]
+        @test res[2][1] ≈ [2.0, 6.0]
+        dv2 = zero(v)
+        autodiff(Reverse, absint_sum_with_ind, Active, Const(pick), Duplicated(v, dv2))
+        @test dv2 ≈ [1.0, 0.0, 1.0]
+    end
+end
+
+@noinline absint_prep_reshape(x) = (x, reshape(Int32[2, 3], 1, 1, :))
+absint_reshape_loss(x) = (r = absint_prep_reshape(x); sum(abs2, r[1]) + sum(r[2]))
+
+@testset "Absint integer array returned next to active argument" begin
+    x = [1.0 2.0; 3.0 4.0]
+    @test Enzyme.gradient(Reverse, absint_reshape_loss, x)[1] ≈ 2x
+end
