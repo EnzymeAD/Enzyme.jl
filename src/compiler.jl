@@ -8820,20 +8820,9 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-function deferred_id_codegen end
-
-function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+# The job that compiles a deferred thunk in `world`, or the exception to throw instead.
+function deferred_thunk_job(world::UInt, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool)
     @nospecialize
-
-    slotnames = Core.svec(
-        Symbol("#self#"),
-        :fa, :a, :tt, :mode, :width, :modifiedbetween,
-        :returnprimal, :shadowinit, :expectedtapetype,
-        :erriffuncwritten, :runtimeactivity, :strongzero
-    )
-
-    stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
-
     ft = eltype(FA)
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
@@ -8843,7 +8832,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
 
     mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
 
-    mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
+    mi === nothing && return MethodError(ft, primal_tt, world)
 
     target = EnzymeTarget()
     rt2 = if A isa UnionAll
@@ -8856,9 +8845,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
 
         if !(A <: Const) && guaranteed_const_nongen(rrt, world)
             estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
-            return quote
-                error($estr)
-            end
+            return ErrorException(estr)
         end
         instantiate_annotation(A, rrt, Width)
     else
@@ -8883,22 +8870,94 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
         RuntimeActivity,
         StrongZero
     ) #=abiwrap=#
-    job =
-        Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
+    return Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
+end
+
+const deferred_slotnames = Core.svec(
+    Symbol("#self#"),
+    :fa, :a, :tt, :mode, :width, :modifiedbetween,
+    :returnprimal, :shadowinit, :expectedtapetype,
+    :erriffuncwritten, :runtimeactivity, :strongzero
+)
+
+# For GPUCompiler before 2.26: register the job in `deferred_codegen_jobs` while inferring
+# the caller, under the address of a trampoline that compiles it on the host.
+function deferred_id_codegen end
+
+function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+    @nospecialize
+    stub = Core.GeneratedFunctionStub(identity, deferred_slotnames, Core.svec())
+
+    job = deferred_thunk_job(world, FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ExpectedTapeType, ErrIfFuncWritten, RuntimeActivity, StrongZero)
+    job isa Exception && return stub(world, source, :(throw($job)))
 
     addr = get_trampoline(job)
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
     code = Any[Core.Compiler.ReturnNode(reinterpret(UInt, id))]
-    ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
+    ci = create_fresh_codeinfo(deferred_id_codegen, source, world, deferred_slotnames, code)
 
-    ci.edges = Any[mi]
+    ci.edges = Any[job.source]
 
     return ci
 end
 
-# The generated wrapper `deferred_id_codegen` is defined in src/late_generated.jl; see the note there.
+# With GPUCompiler 2.26+, a deferred thunk is requested with a spec, from which GPUCompiler
+# creates the job when generating code (see `GPUCompiler.deferred_job`). That works for
+# callers cached in package images and inferred concurrently.
+const HAS_DEFERRED_SPEC = hasmethod(GPUCompiler.deferred_codegen, Tuple{Any})
+
+struct DeferredThunk{FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ExpectedTapeType, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+
+function deferred_job_for(@nospecialize(spec::DeferredThunk), world::UInt)
+    return deferred_thunk_job(world, typeof(spec).parameters...)
+end
+
+@static if HAS_DEFERRED_SPEC
+    function GPUCompiler.deferred_job(spec::DeferredThunk, job::CompilerJob)
+        dyn_job = deferred_job_for(spec, job.world)
+        dyn_job isa Exception && throw(dyn_job)
+        return dyn_job
+    end
+end
+
+# The spec of a deferred thunk, or code that throws if there is none. The generated function
+# adds an edge to the primal's method, so that redefining it invalidates the caller.
+function deferred_spec_codegen end
+
+function deferred_spec_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+    @nospecialize
+    stub = Core.GeneratedFunctionStub(identity, deferred_slotnames, Core.svec())
+
+    job = deferred_thunk_job(world, FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ExpectedTapeType, ErrIfFuncWritten, RuntimeActivity, StrongZero)
+    job isa Exception && return stub(world, source, :(throw($job)))
+
+    spec = DeferredThunk{FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ExpectedTapeType, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
+    code = Any[Core.Compiler.ReturnNode(spec)]
+    ci = create_fresh_codeinfo(deferred_spec_codegen, source, world, deferred_slotnames, code)
+
+    ci.edges = Any[job.source]
+
+    return ci
+end
+
+# In code that GPUCompiler doesn't compile (e.g. called directly on the host), the request
+# returns `C_NULL`. Compile the thunk lazily through a trampoline instead, once per world.
+const host_deferred_thunks = Dict{Tuple{DeferredThunk, UInt}, Ptr{Cvoid}}()
+const host_deferred_thunks_lock = ReentrantLock()
+
+@noinline function host_deferred_thunk(@nospecialize(spec::DeferredThunk))
+    world = GPUCompiler.tls_world_age()
+    return @lock host_deferred_thunks_lock get!(host_deferred_thunks, (spec, world)) do
+        job = deferred_job_for(spec, world)
+        job isa Exception && throw(job)
+        pointer(get_trampoline(job))
+    end
+end
+
+# The generated wrappers `deferred_id_codegen` and `deferred_spec_codegen` are defined in
+# src/late_generated.jl; see the note there.
 
 @inline function deferred_codegen(
         @nospecialize(fa::Type),
@@ -8914,8 +8973,19 @@ end
         @nospecialize(runtimeactivity::Val),
         @nospecialize(strongzero::Val)
     )
-    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
-    return _deferred_codegen_call(Val(id))
+    @static if HAS_DEFERRED_SPEC
+        spec = deferred_spec_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
+        ptr = GPUCompiler.deferred_codegen(spec)
+        if ptr == C_NULL
+            # the dynamic call keeps the host-only code out of device code, where the
+            # branch folds away once GPUCompiler has resolved the request
+            ptr = Base.inferencebarrier(host_deferred_thunk)(spec)::Ptr{Cvoid}
+        end
+        return ptr
+    else
+        id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
+        return _deferred_codegen_call(Val(id))
+    end
 end
 
 # `@generated` shell so the `ccall("extern deferred_codegen", …)` body
