@@ -17,6 +17,7 @@ For releases up to and including v0.13.221, see the [GitHub releases](https://gi
 
 ### Fixed
 
+- The LLVM error "symbol multiply defined" when Enzyme linked two modules that define the same global variable, for example a `ccalllib_*` library handle [#4122].
 - A crash during garbage collection on Julia 1.12 and later. The return roots of a thunk call were not initialized [#4069].
 - Very long compile times for functions with many basic blocks, for example large KernelAbstractions kernels. SimplifyCFG now runs before each run of the always-inliner [#4050].
 - Julia 1.14: custom rules were not used, because inference inlined the function into its caller. The rewrites of broadcast, FunctionWrappers, `unsafe_copyto!`, `within_autodiff` and `invoke` did not run either [#3344].
@@ -46,3 +47,4 @@ For releases up to and including v0.13.221, see the [GitHub releases](https://gi
 [#4081]: https://github.com/EnzymeAD/Enzyme.jl/issues/4081
 [#4097]: https://github.com/EnzymeAD/Enzyme.jl/issues/4097
 [#4105]: https://github.com/EnzymeAD/Enzyme.jl/issues/4105
+[#4122]: https://github.com/EnzymeAD/Enzyme.jl/issues/4122

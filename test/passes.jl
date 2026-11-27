@@ -355,6 +355,36 @@ end
             ),
         )
         @test last(collect(callinst2.operands)).name == "julia___dup"
+
+        # Test 3: A global variable defined in both modules does not stop the link
+        dst3 = parse(
+            LLVM.Module,
+            """
+            @ccalllib_dup = global i64 0
+            define i64 @reads_dup_dst() {
+              %r = load i64, i64* @ccalllib_dup
+              ret i64 %r
+            }
+            """,
+        )
+        src3 = parse(
+            LLVM.Module,
+            """
+            @ccalllib_dup = global i64 0
+            define i64 @reads_dup_src() {
+              %r = load i64, i64* @ccalllib_dup
+              ret i64 %r
+            }
+            """,
+        )
+        Enzyme.Compiler.link_split_existing!(dst3, src3)
+        gvs3 = dst3.globals
+        @test haskey(gvs3, "ccalllib_dup")
+        @test gvs3["ccalllib_dup"].linkage == LLVM.Linkage.External
+        @test haskey(dst3.functions, "reads_dup_dst")
+        @test haskey(dst3.functions, "reads_dup_src")
+        srcload = first(first(dst3.functions["reads_dup_src"].blocks).instructions)
+        @test first(collect(srcload.operands)).linkage == LLVM.Linkage.Internal
     end
 end
 
