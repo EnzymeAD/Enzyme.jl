@@ -994,7 +994,7 @@ function annotate!(mod::LLVM.Module)
                     end
                     if !(
                             cf == fn ||
-                                ((cf.name == "julia.call" || cf.name != "julia.call2") && c.operands[1] == fn)
+                                ((cf.name == "julia.call" || cf.name == "julia.call2") && c.operands[1] == fn)
                         )
                         continue
                     end
