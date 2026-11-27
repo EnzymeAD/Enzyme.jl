@@ -222,6 +222,37 @@ julia> jacobian(Forward, foo, [1.0, 2.0], chunk=Val(2))
 ([-400.0 200.0; 2.0 1.0],)
 ```
 
+### Sparse Jacobians
+
+[`Enzyme.sparse_jacobian`](@ref) computes the Jacobian of an in-place function
+`f!(y, x)` as a `SparseMatrixCSC`. It runs forward mode once per column, seeded
+with [`Enzyme.todense`](@ref) pointers, and Enzyme rewrites the loops of the
+derivative to only visit the entries that can be non-zero. For stencil-like
+functions the cost then scales with the number of non-zeros rather than with
+`length(x) * length(y)`.
+
+```julia
+julia> function f!(y, x)
+           @inbounds for i in 1:length(x)-1
+               y[i] = x[i] * x[i+1]
+           end
+           @inbounds y[end] = x[end]^2
+           return nothing
+       end;
+
+julia> Enzyme.sparse_jacobian(f!, zeros(3), [1.0, 2.0, 3.0])
+3×3 SparseArrays.SparseMatrixCSC{Float64, Int64} with 5 stored entries:
+ 2.0  1.0   ⋅
+  ⋅   3.0  2.0
+  ⋅    ⋅   6.0
+```
+
+`f!` receives [`Enzyme.PtrVector`](@ref)s, so it must accept any `AbstractVector`.
+Enzyme can only skip the zero entries of loops that it can analyze: loops with a
+single exit (use `@inbounds`, since bounds checks add exits) whose accesses are
+affine in the loop counters. Other loops are evaluated densely, with a warning,
+and the result is still exact.
+
 ### Hessian Vector Product Convenience functions
 
 Enzyme provides convenience functions for second-order derivative computations, like [`hvp`](@ref) to compute Hessian vector products. Mathematically, this computes $H(x) v$, where $H$ is the hessian operator.
