@@ -1284,3 +1284,65 @@ end
         end
     end
 end
+
+# SimplifyCFG moves the speculatable call into `entry` and removes its debug location. The
+# verifier rejects the call, because the caller and the function that it calls have debug info.
+@testset "Debug locations of speculated calls" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            define i64 @callee() #0 !dbg !9 {
+              ret i64 1, !dbg !10
+            }
+
+            declare void @sink(i8)
+
+            define void @caller(i64 %x) !dbg !4 {
+            entry:
+              %a = icmp eq i64 %x, 0, !dbg !6
+              br i1 %a, label %yes, label %next, !dbg !6
+
+            next:
+              %t = call i64 @callee(), !dbg !7
+              %b = icmp eq i64 %x, %t, !dbg !7
+              br i1 %b, label %yes, label %no, !dbg !7
+
+            yes:
+              call void @sink(i8 1), !dbg !8
+              ret void, !dbg !8
+
+            no:
+              call void @sink(i8 0), !dbg !8
+              ret void, !dbg !8
+            }
+
+            attributes #0 = { noinline nounwind speculatable willreturn memory(none) }
+
+            !llvm.dbg.cu = !{!0}
+            !llvm.module.flags = !{!2, !3}
+
+            !0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "x", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug)
+            !1 = !DIFile(filename: "a.c", directory: "/")
+            !2 = !{i32 2, !"Debug Info Version", i32 3}
+            !3 = !{i32 2, !"Dwarf Version", i32 4}
+            !4 = distinct !DISubprogram(name: "caller", scope: !1, file: !1, line: 1, type: !5, unit: !0)
+            !5 = !DISubroutineType(types: !{})
+            !6 = !DILocation(line: 2, scope: !4)
+            !7 = !DILocation(line: 3, scope: !4)
+            !8 = !DILocation(line: 4, scope: !4)
+            !9 = distinct !DISubprogram(name: "callee", scope: !1, file: !1, line: 9, type: !5, unit: !0)
+            !10 = !DILocation(line: 9, scope: !9)
+            """
+        )
+        LLVM.run!("simplifycfg", mod)
+        Enzyme.Compiler.restore_call_debuglocs!(mod)
+        LLVM.verify(mod)
+        calls = LLVM.CallInst[]
+        for bb in mod.functions["caller"].blocks, inst in bb.instructions
+            inst isa LLVM.CallInst || continue
+            LLVM.name(LLVM.called_operand(inst)) == "callee" && push!(calls, inst)
+        end
+        @test length(calls) == 1
+        @test LLVM.API.LLVMInstructionGetDebugLoc(calls[1]) != C_NULL
+    end
+end

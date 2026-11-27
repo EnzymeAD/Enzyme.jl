@@ -64,6 +64,39 @@ end
 MarkLoadsDereferenceablePass(enzyme_ctx::Union{EnzymeContext, Nothing}) =
     FunctionPass("enzyme_mark_loads_dereferenceable", MarkLoadsDereferenceable(enzyme_ctx))
 
+"""
+    restore_call_debuglocs!(mod::LLVM.Module)
+
+Give a debug location to each call in `mod` that must have one and has none.
+
+LLVM's SimplifyCFG removes the debug location of an instruction that it moves into the block
+before it to merge two branches. It can move a call to a `speculatable` function, and Enzyme
+gives this attribute to some functions that it does not inline (for example
+`Threads.threadid`). The verifier rejects a call without a debug location if the caller and
+the function that it calls have debug info. The new location is line 0 of the caller, as in
+LLVM's `Instruction::dropLocation`.
+"""
+function restore_call_debuglocs!(mod::LLVM.Module)
+    for f in mod.functions
+        isempty(f.blocks) && continue
+        sp = LLVM.API.LLVMGetSubprogram(f)
+        sp == C_NULL && continue
+        loc = C_NULL
+        for bb in f.blocks, inst in bb.instructions
+            isa(inst, LLVM.CallBase) || continue
+            LLVM.API.LLVMInstructionGetDebugLoc(inst) == C_NULL || continue
+            callee = LLVM.called_operand(inst)
+            isa(callee, LLVM.Function) || continue
+            LLVM.API.LLVMGetSubprogram(callee) == C_NULL && continue
+            if loc == C_NULL
+                loc = LLVM.API.LLVMDIBuilderCreateDebugLocation(context(mod), 0, 0, sp, C_NULL)
+            end
+            LLVM.API.LLVMInstructionSetDebugLoc(inst, loc)
+        end
+    end
+    return nothing
+end
+
 # `enzyme_ctx` is the compilation `mod` belongs to, `nothing` outside of one.
 function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_ctx::Union{EnzymeContext, Nothing}, tti = nothing)
     @dispose pb = PassBuilder() begin
@@ -271,6 +304,8 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
     run!(GCInvariantVerifierPass(strong = false), mod)
 
     nodecayed_phis!(mod)
+
+    restore_call_debuglocs!(mod)
 
     return run!(GCInvariantVerifierPass(strong = false), mod)
 end
@@ -621,6 +656,7 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
             push!(f.function_attributes, StringAttribute("frame-pointer", "all"))
         end
     end
+    restore_call_debuglocs!(mod)
     # @safe_show "post_mod", mod
     # flush(stdout)
     # flush(stderr)
