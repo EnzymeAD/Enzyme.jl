@@ -540,3 +540,24 @@ end
 @testset "Invoke within apply iterate" begin
     autodiff(set_runtime_activity(Reverse), invokeiter, Active, Active(1.0), Const(34))
 end
+
+# Julia 1.12 and later accept a `Method` as the target of `invoke`. A splat of more
+# than 32 arguments makes the `invoke` go through the runtime iterate path.
+@static if VERSION >= v"1.12"
+    invoke_method_target(x::Number, ys::Vararg{Number}) = x * x * length(ys)
+    const INVOKE_METHOD = which(invoke_method_target, Tuple{Number, Vararg{Number}})
+    invoke_method_call(x, ys::Vararg{Number}) = invoke(invoke_method_target, INVOKE_METHOD, x, ys...)
+    invoke_method_loss(a, n) = invoke_method_call(a, ones(n)...)
+
+    @testset "Invoke with a Method target within apply iterate" begin
+        res = autodiff(set_runtime_activity(Reverse), invoke_method_loss, Active, Active(2.0), Const(40))
+        @test res[1][1] ≈ 160.0
+        res = autodiff(set_runtime_activity(Forward), invoke_method_loss, Duplicated(2.0, 1.0), Const(40))
+        @test res[1] ≈ 160.0
+        res = autodiff(
+            set_runtime_activity(Forward), invoke_method_loss, BatchDuplicated(2.0, (1.0, 2.0)), Const(40)
+        )
+        @test res[1][1] ≈ 160.0
+        @test res[1][2] ≈ 320.0
+    end
+end

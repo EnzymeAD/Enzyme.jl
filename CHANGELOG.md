@@ -26,6 +26,7 @@ For releases up to and including v0.13.221, see the [GitHub releases](https://gi
 - Julia 1.14: support for the field-aware write barriers [#3765].
 - Julia 1.14: a segmentation fault in `Enzyme.Compiler.enzyme_code_llvm` [#4097].
 - Julia 1.14: the lookup of the CHOLMOD struct types of SparseArrays [#4075].
+- Julia 1.14: differentiation of `hcat`, `vcat` and `hvcat` of more than 32 numbers when SparseArrays is loaded. An `invoke` with a `Method` target in the runtime iterate path now uses the signature type of the `Method` [#4123].
 - LLVM 21 and later: the error `Unknown attribute kind: nocapture` [#4076].
 - LLVM 21 and later: an assertion failure when Enzyme imports a cached autodiff thunk [#4079].
 - LLVM 22: the new form of the lifetime intrinsics [#4077].
@@ -46,3 +47,4 @@ For releases up to and including v0.13.221, see the [GitHub releases](https://gi
 [#4081]: https://github.com/EnzymeAD/Enzyme.jl/issues/4081
 [#4097]: https://github.com/EnzymeAD/Enzyme.jl/issues/4097
 [#4105]: https://github.com/EnzymeAD/Enzyme.jl/issues/4105
+[#4123]: https://github.com/EnzymeAD/Enzyme.jl/issues/4123

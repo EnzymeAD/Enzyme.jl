@@ -1170,6 +1170,33 @@ function fwddiff_with_return(
     end
 end
 
+# Julia 1.12 and later accept a `Method` as the target of `invoke`. SparseArrays on
+# Julia 1.14 uses this in `hcat`, `vcat` and `hvcat` for numbers. In the runtime iterate
+# path, the target is a value of the abstract type `Method`. Thus the thunk for
+# `BuiltinWrapper(invoke)` keeps a dynamic `jl_f_invoke` call, and Enzyme cannot
+# differentiate it. This function replaces the `Method` with its signature type. A type
+# target has a singleton type, thus inference resolves the `invoke` statically.
+# The replacement occurs only if the lookup for the signature type gives the same
+# `Method`. If not (for example, an overlay method), the `Method` stays.
+@inline invoke_target_as_type(@nospecialize(f), args::Vararg{Any, N}) where {N} = args
+
+@static if VERSION >= v"1.12.0-"
+    @inline function invoke_target_as_type(
+            ::BuiltinWrapper{typeof(Core.invoke)},
+            fa::Annotation,
+            target::Annotation{Method},
+            rest::Vararg{Any, N},
+        ) where {N}
+        m = target.val
+        sig = Base.signature_type(fa.val, Base.tuple_type_tail(m.sig))
+        found = ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, nothing, Base.tls_world_age())
+        if found === m
+            return (fa, Const(Base.tuple_type_tail(m.sig)), rest...)
+        end
+        return (fa, target, rest...)
+    end
+end
+
 function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
     wrappedexexpand = Vector{Expr}(undef, N)
     for i in 1:N
@@ -1182,7 +1209,7 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
             f
         end
         $(active_refs...)
-        args = ($(wrappedexexpand...),)
+        args = invoke_target_as_type(f, $(wrappedexexpand...))
         tt′ = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
         fwddiff_with_return(
@@ -1476,7 +1503,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, a
         end
         refs = Base.RefValue[]
         $(active_refs...)
-        args = ($(wrappedexexpand...),)
+        args = invoke_target_as_type(f, $(wrappedexexpand...))
         tt′ = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
         tmpvals = augfwd_with_return(
@@ -1790,7 +1817,7 @@ function body_runtime_iterate_rev(
         end
         (tape0, refs) = tape
         $(active_refs...)
-        args = ($(wrappedexexpand...),)
+        args = invoke_target_as_type(f, $(wrappedexexpand...))
         tt′ = Enzyme.vaTypeof(args...)
         FT = Core.Typeof(f)
         rev_with_return(
