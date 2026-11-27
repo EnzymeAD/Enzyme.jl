@@ -13,13 +13,67 @@ LLVM.@module_pass "enzyme-fixup-batched-julia" FixupBatchedJuliaCallingConventio
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
+# Whether `ptr` points into an object freshly allocated by a GC allocation call.
+function points_into_gc_alloc(@nospecialize(ptr::LLVM.Value))
+    while true
+        if isa(ptr, LLVM.GetElementPtrInst) || isa(ptr, LLVM.BitCastInst) ||
+                isa(ptr, LLVM.AddrSpaceCastInst)
+            ptr = operands(ptr)[1]
+        elseif isa(ptr, LLVM.ConstantExpr) && (
+                opcode(ptr) == LLVM.API.LLVMGetElementPtr ||
+                    opcode(ptr) == LLVM.API.LLVMBitCast ||
+                    opcode(ptr) == LLVM.API.LLVMAddrSpaceCast
+            )
+            ptr = operands(ptr)[1]
+        else
+            break
+        end
+    end
+    isa(ptr, LLVM.CallInst) || return false
+    fn = LLVM.called_operand(ptr)
+    isa(fn, LLVM.Function) || return false
+    nm = LLVM.name(fn)
+    return nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" ||
+        nm == "ijl_gc_alloc_typed"
+end
+
+# The Attributor treats a `julia.gc_alloc_obj` result as a local object and deletes stores
+# into it that no LLVM-visible load reads, e.g. the `ref.mem` field of an `Array` whose only
+# remaining user is an error path that reads its size. The GC still marks the fields of a
+# rooted object, so a deleted store leaves garbage in a field the GC follows (#3793).
+# The Attributor never deletes a volatile store, so mark these stores volatile for the run.
+function protect_gc_field_stores!(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        isa(inst, LLVM.StoreInst) || continue
+        Bool(LLVM.API.LLVMGetVolatile(inst)) && continue
+        vt = value_type(operands(inst)[1])
+        (isa(vt, LLVM.PointerType) && addrspace(vt) == Tracked) || continue
+        points_into_gc_alloc(operands(inst)[2]) || continue
+        LLVM.API.LLVMSetVolatile(inst, true)
+        metadata(inst)["enzymejl_attr_volatile"] = LLVM.MDNode(LLVM.Metadata[])
+    end
+    return nothing
+end
+
+function unprotect_gc_field_stores!(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        isa(inst, LLVM.StoreInst) || continue
+        haskey(metadata(inst), "enzymejl_attr_volatile") || continue
+        LLVM.API.LLVMSetVolatile(inst, false)
+        Base.delete!(metadata(inst), "enzymejl_attr_volatile")
+    end
+    return nothing
+end
+
 function enzyme_attributor_pass!(mod::LLVM.Module)
+    protect_gc_field_stores!(mod)
     ccall(
         (:RunAttributorOnModule, API.libEnzyme),
         Cvoid,
         (LLVM.API.LLVMModuleRef,),
         mod,
     )
+    unprotect_gc_field_stores!(mod)
     return true
 end
 
