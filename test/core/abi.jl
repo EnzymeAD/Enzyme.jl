@@ -5,7 +5,7 @@ retty() = Float64
 
 @testset "Const Return" begin
     res = Enzyme.autodiff(ForwardWithPrimal, retty, Const)
-    @test res === NamedTuple{(Symbol("1"),), Tuple{Type{Float64}}}((Float64,))
+    @test res === NamedTuple{(Symbol("1"),), Tuple{Core.Typeof(Float64)}}((Float64,))
     res = Enzyme.autodiff(Forward, retty, Const)
     @test res === ()
 end

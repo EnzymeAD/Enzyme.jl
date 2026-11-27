@@ -416,7 +416,7 @@ end
         enzyme_ctx.julia_values["slot"] = SlotConst{Float64}
         @test Enzyme.Compiler.absint(value, enzyme_ctx) == (true, SlotConst{Float64})
         @test Enzyme.Compiler.abs_typeof(value, enzyme_ctx) ==
-            (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
+            (true, Core.Typeof(SlotConst{Float64}), GPUCompiler.BITS_REF)
 
         # `nothing` is a value like any other, not a miss.
         enzyme_ctx.julia_values["slot"] = nothing
@@ -473,7 +473,7 @@ end
         for enzyme_ctx in (nothing, Enzyme.Compiler.EnzymeContext(Base.get_world_counter()))
             @test Enzyme.Compiler.absint(value, enzyme_ctx) == (true, SlotConst{Float64})
             @test Enzyme.Compiler.abs_typeof(value, enzyme_ctx) ==
-                (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
+                (true, Core.Typeof(SlotConst{Float64}), GPUCompiler.BITS_REF)
         end
         LLVM.dispose(mod)
     end
